@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 
 
+@jax.jit
 def run_model(trainable_params, non_trainable_params, x):
     """
     Run the model over time series of precipitation and temperature with constrained parameters.
@@ -34,6 +35,7 @@ def run_model(trainable_params, non_trainable_params, x):
     return run_model_unconstrained(params, x)
 
 
+@jax.jit
 def run_model_unconstrained(params, x):
     """
     Run the model over time series of precipitation and temperature with unconstrained parameters.
@@ -57,11 +59,12 @@ def run_model_unconstrained(params, x):
         return swe, smb 
 
     inputs = (precipitation, temperature)
-    _, smb_series = lax.scan(scan_step, initial_swe, inputs)
+    _, smb_series = jax.lax.scan(scan_step, initial_swe, inputs)
     
     return smb_series
 
 
+@jax.jit
 def run_one_day_iteration(params, precipitation, temperature, prev_swe):
     """
     Make one-day model timestep.
@@ -85,7 +88,7 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe):
     t_softplus_sharpness = params["t_softplus_sharpness"]
     swe_softplus_sharpness = params["swe_softplus_sharpness"]
     
-    solid_precipitation = jax.nn.sigmoid(snow_to_rain_steepness * (snow_to_rain_centre - temperature))
+    solid_precipitation = precipitation * jax.nn.sigmoid(snow_to_rain_steepness * (snow_to_rain_centre - temperature))
 
     t_pos = softplus_t(t_softplus_sharpness, temperature)
     fsc = hill(snow_depletion_steepness, snow_depletion_centre, prev_swe)
@@ -142,7 +145,7 @@ def softplus_t(t, x): # TODO: Consider moving outside the model module
     Returns:
         jnp.ndarray
     """
-    return jnp.log1p(jnp.exp(t * x)) / t
+    return jax.nn.softplus(t * x) / t
 
 
 @jax.jit
