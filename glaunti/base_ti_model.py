@@ -1,9 +1,11 @@
 import jax
 import jax.numpy as jnp
+import utils.activations
+import constants
 
 
 @jax.jit
-def run_model(trainable_params, non_trainable_params, x):
+def run_model(trainable_params, non_trainable_params, x, initial_swe=None):
     """
     Run the model over time series of precipitation and temperature with constrained parameters.
 
@@ -32,11 +34,11 @@ def run_model(trainable_params, non_trainable_params, x):
         snow_to_rain_centre=params["snow_to_rain_centre"],
     )
     
-    return run_model_unconstrained(params, x)
+    return run_model_unconstrained(params, x, initial_swe=None)
 
 
 @jax.jit
-def run_model_unconstrained(params, x):
+def run_model_unconstrained(params, x, initial_swe=None):
     """
     Run the model over time series of precipitation and temperature with unconstrained parameters.
 
@@ -50,8 +52,9 @@ def run_model_unconstrained(params, x):
     precipitation = x["precipitation"]
     temperature = x["temperature"]
 
-    _, height, width = precipitation.shape
-    initial_swe = jnp.zeros((height, width))
+    if initial_swe is None:
+        _, height, width = temperature.shape
+        initial_swe = jnp.zeros((height, width))
 
     def scan_step(prev_swe, inputs_t):
         precipitation_t, temperature_t = inputs_t
@@ -90,12 +93,15 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe):
     
     solid_precipitation = precipitation * jax.nn.sigmoid(snow_to_rain_steepness * (snow_to_rain_centre - temperature))
 
-    t_pos = softplus_t(t_softplus_sharpness, temperature)
-    fsc = hill(snow_depletion_steepness, snow_depletion_centre, prev_swe)
+    t_pos = utils.activations.softplus_t(t_softplus_sharpness, temperature)
+    fsc = utils.activations.hill_curve(snow_depletion_steepness, snow_depletion_centre, prev_swe)
     t_pos_snow = fsc * t_pos
     t_pos_ice = (1 - fsc) * t_pos
     
-    swe = softplus_t(swe_softplus_sharpness, prev_swe + prec_scale * solid_precipitation - ddf_snow * t_pos_snow)
+    swe = utils.activations.softplus_t(
+        swe_softplus_sharpness, 
+        prev_swe + prec_scale * solid_precipitation - ddf_snow * t_pos_snow
+    )
     smb = prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice)
     
     return swe, smb
@@ -116,51 +122,18 @@ def get_initial_model_parameters():
         PyTree: Set of initial parameter values.
     """
     trainable_params = dict(
-        prec_scale_log=jnp.log(1.4),
-        ddf_snow_log=jnp.log(0.0049),
-        ddf_relative_ice_minus_one_log=jnp.log(0.5),
-        snow_to_rain_steepness_log=jnp.log(1.5),
-        snow_to_rain_centre=1.0,
-        snow_depletion_steepness_log=jnp.log(3.0),
-        snow_depletion_centre_log=jnp.log(0.03),
+        prec_scale_log=constants.prec_scale_log,
+        ddf_snow_log=constants.ddf_snow_log,
+        ddf_relative_ice_minus_one_log=constants.ddf_relative_ice_minus_one_log,
+        snow_to_rain_steepness_log=constants.snow_to_rain_steepness_log,
+        snow_to_rain_centre=constants.snow_to_rain_centre,
+        snow_depletion_steepness_log=constants.snow_depletion_steepness_log,
+        snow_depletion_centre_log=constants.snow_depletion_centre_log,
     )
     
     non_trainable_params = dict(
-        t_softplus_sharpness_log=jnp.log(10),
-        swe_softplus_sharpness_log=jnp.log(20),
+        t_softplus_sharpness_log=constants.t_softplus_sharpness_log,
+        swe_softplus_sharpness_log=constants.swe_softplus_sharpness_log,
     )
     
     return trainable_params, non_trainable_params
-
-
-@jax.jit
-def softplus_t(t, x): # TODO: Consider moving outside the model module
-    """
-    Steepness-parameterised softplus.
-
-    Args:
-        t (float): Softplus steepness
-        x (jnp.ndarray): Input
-
-    Returns:
-        jnp.ndarray
-    """
-    return jax.nn.softplus(t * x) / t
-
-
-@jax.jit
-def hill(s, c, x): # TODO: Consider moving outside the model module
-    """
-    Hill curve.
-
-    Args:
-        s (float): Curve steepness
-        c (float): Curve centre (x at y = 0.5)
-        x (jnp.ndarray): Input
-
-    Returns:
-        jnp.ndarray
-    """
-    x_term = jnp.power(x, s)
-    c_term = jnp.power(c, s)
-    return x_term / (x_term + c_term)
