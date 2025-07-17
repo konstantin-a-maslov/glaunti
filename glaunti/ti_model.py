@@ -5,19 +5,21 @@ import constants
 
 
 @jax.jit
-def run_model(trainable_params, non_trainable_params, x, initial_swe=None):
+def run_model(trainable_params, static_params, x, initial_swe=None):
     """
     Run the model over time series of precipitation and temperature with constrained parameters.
 
     Args:
         trainable_params (PyTree): Set of trainable parameters
-        non_trainable_params (PyTree): Set of non-trainable parameters
-        x (PyTree): Model inputs, precipitation and temperature with shapes (T, H, W)
+        static_params (PyTree): Set of non-trainable parameters
+        x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
+        initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
 
     Returns:
-        jnp.ndarray: Surface mass balance predictions (T, H, W).
+        smb_series (jnp.ndarray): Surface mass balance predictions (T, H, W)
+        swe (jnp.ndarray): Updated snow water equivalent (H, W)
     """
-    params = {**non_trainable_params, **trainable_params}
+    params = {**static_params, **trainable_params}
     # Extract params, impose constraints where needed
     params = dict(
         # > 0
@@ -33,8 +35,9 @@ def run_model(trainable_params, non_trainable_params, x, initial_swe=None):
         # No constraints
         snow_to_rain_centre=params["snow_to_rain_centre"],
     )
-    
-    return run_model_unconstrained(params, x, initial_swe=None)
+
+    smb_series, swe = run_model_unconstrained(params, x, initial_swe)
+    return smb_series, swe
 
 
 @jax.jit
@@ -45,26 +48,27 @@ def run_model_unconstrained(params, x, initial_swe=None):
     Args:
         params (PyTree): Set of parameters
         x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
+        initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
 
     Returns:
-        jnp.ndarray: Surface mass balance predictions (T, H, W).
+        smb_series (jnp.ndarray): Surface mass balance predictions (T, H, W)
+        swe (jnp.ndarray): Updated snow water equivalent (H, W)
     """
     precipitation = x["precipitation"]
     temperature = x["temperature"]
 
     if initial_swe is None:
         _, height, width = temperature.shape
-        initial_swe = jnp.zeros((height, width))
+        initial_swe = jnp.full((height, width), fill_value=params["snow_depletion_centre"])
 
-    def scan_step(prev_swe, inputs_t):
-        precipitation_t, temperature_t = inputs_t
-        swe, smb = run_one_day_iteration(params, precipitation_t, temperature_t, prev_swe)
+    def scan_step(prev_swe, inputs_d):
+        precipitation_d, temperature_d = inputs_d
+        smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe)
         return swe, smb 
 
     inputs = (precipitation, temperature)
-    _, smb_series = jax.lax.scan(scan_step, initial_swe, inputs)
-    
-    return smb_series
+    swe, smb_series = jax.lax.scan(scan_step, initial_swe, inputs)
+    return smb_series, swe
 
 
 @jax.jit
@@ -79,7 +83,8 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe):
         prev_swe (jnp.ndarray): Accumulated snow water equivalent (H, W)
 
     Returns:
-        jnp.ndarray: Surface mass balance prediction (H, W).
+        smb (jnp.ndarray): Surface mass balance prediction (H, W)
+        swe (jnp.ndarray): Updated snow water equivalent (H, W)
     """ 
     prec_scale = params["prec_scale"]
     ddf_snow = params["ddf_snow"]
@@ -103,21 +108,13 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe):
         prev_swe + prec_scale * solid_precipitation - ddf_snow * t_pos_snow
     )
     smb = prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice)
-    
-    return swe, smb
+    return smb, swe
 
 
-def get_initial_model_parameters():
+def get_initial_model_parameters(key=None):
     """
     Initialise TI model parameters.
-    
-    Based on physics-plausible and literature priors:
-        https://www.frontiersin.org/journals/earth-science/articles/10.3389/feart.2015.00054/full
-        https://www.sciencedirect.com/science/article/pii/S0022169403002579
-        https://www.science.org/doi/10.1126/science.abo1324
-        https://www.nature.com/articles/s41467-018-03629-7
-        https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2012JD018178
-
+        
     Returns:
         PyTree: Set of initial parameter values.
     """
@@ -131,9 +128,9 @@ def get_initial_model_parameters():
         snow_depletion_centre_log=constants.snow_depletion_centre_log,
     )
     
-    non_trainable_params = dict(
+    static_params = dict(
         t_softplus_sharpness_log=constants.t_softplus_sharpness_log,
         swe_softplus_sharpness_log=constants.swe_softplus_sharpness_log,
     )
     
-    return trainable_params, non_trainable_params
+    return trainable_params, static_params
