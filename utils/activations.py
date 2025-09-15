@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 
 
-@jax.jit
 def softplus_t(t, x): 
     """
     Steepness-parameterised softplus.
@@ -17,7 +16,6 @@ def softplus_t(t, x):
     return jax.nn.softplus(t * x) / t
 
 
-@jax.jit
 def hill_curve(s, c, x):
     """
     Hill curve.

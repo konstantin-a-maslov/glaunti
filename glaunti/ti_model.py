@@ -4,8 +4,7 @@ import utils.activations
 import constants
 
 
-@jax.jit
-def run_model(trainable_params, static_params, x, initial_swe=None):
+def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False):
     """
     Run the model over time series of precipitation and temperature with constrained parameters.
 
@@ -16,32 +15,17 @@ def run_model(trainable_params, static_params, x, initial_swe=None):
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
 
     Returns:
-        smb_series (jnp.ndarray): Surface mass balance predictions (T, H, W)
+        smb (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
         swe (jnp.ndarray): Updated snow water equivalent (H, W)
     """
     params = {**static_params, **trainable_params}
-    # Extract params, impose constraints where needed
-    params = dict(
-        # > 0
-        prec_scale=jnp.exp(params["prec_scale_log"]), 
-        ddf_snow=jnp.exp(params["ddf_snow_log"]),
-        snow_to_rain_steepness=jnp.exp(params["snow_to_rain_steepness_log"]),
-        snow_depletion_steepness=jnp.exp(params["snow_depletion_steepness_log"]),
-        snow_depletion_centre=jnp.exp(params["snow_depletion_centre_log"]),
-        t_softplus_sharpness=jnp.exp(params["t_softplus_sharpness_log"]),
-        swe_softplus_sharpness=jnp.exp(params["swe_softplus_sharpness_log"]),
-        # > 1
-        ddf_relative_ice=jnp.exp(params["ddf_relative_ice_minus_one_log"]) + 1.0,
-        # No constraints
-        snow_to_rain_centre=params["snow_to_rain_centre"],
-    )
+    params = resolve_param_constraints(params) # Extract params, impose constraints where needed
 
-    smb_series, swe = run_model_unconstrained(params, x, initial_swe)
-    return smb_series, swe
+    smb, swe = run_model_unconstrained(params, x, initial_swe, return_series)
+    return smb, swe
 
 
-@jax.jit
-def run_model_unconstrained(params, x, initial_swe=None):
+def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
     """
     Run the model over time series of precipitation and temperature with unconstrained parameters.
 
@@ -51,27 +35,40 @@ def run_model_unconstrained(params, x, initial_swe=None):
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
 
     Returns:
-        smb_series (jnp.ndarray): Surface mass balance predictions (T, H, W)
+        smb (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
         swe (jnp.ndarray): Updated snow water equivalent (H, W)
     """
     precipitation = x["precipitation"]
     temperature = x["temperature"]
+    inputs = (precipitation, temperature)
 
     if initial_swe is None:
         _, height, width = temperature.shape
         initial_swe = jnp.full((height, width), fill_value=params["snow_depletion_centre"])
 
-    def scan_step(prev_swe, inputs_d):
-        precipitation_d, temperature_d = inputs_d
-        smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe)
-        return swe, smb 
+    if return_series:
+        def scan_step(prev_swe, inputs_d):
+            precipitation_d, temperature_d = inputs_d
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe)
+            return swe, smb 
+        scan_step = jax.remat(scan_step)
+        
+        swe, smb = jax.lax.scan(scan_step, initial_swe, inputs)
+        
+    else:
+        def scan_step(carry, inputs_d):
+            precipitation_d, temperature_d = inputs_d
+            prev_swe, smb_acc = carry
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe)
+            return (swe, smb_acc + smb), None 
+        scan_step = jax.remat(scan_step)
+        
+        carry = (initial_swe, jnp.zeros_like(initial_swe))
+        (swe, smb), _ = jax.lax.scan(scan_step, carry, inputs)
+        
+    return smb, swe
 
-    inputs = (precipitation, temperature)
-    swe, smb_series = jax.lax.scan(scan_step, initial_swe, inputs)
-    return smb_series, swe
 
-
-@jax.jit
 def run_one_day_iteration(params, precipitation, temperature, prev_swe):
     """
     Make one-day model timestep.
@@ -134,3 +131,30 @@ def get_initial_model_parameters(key=None):
     )
     
     return trainable_params, static_params
+
+
+def resolve_param_constraints(params):
+    """
+    Resolve parameter constraints.
+
+    Args:
+        params (PyTree): Set of log-transformed parameters
+
+    Returns:
+        PyTree: Set of constrained parameters
+    """
+    params = dict(
+        # > 0
+        prec_scale=jnp.exp(params["prec_scale_log"]), 
+        ddf_snow=jnp.exp(params["ddf_snow_log"]),
+        snow_to_rain_steepness=jnp.exp(params["snow_to_rain_steepness_log"]),
+        snow_depletion_steepness=jnp.exp(params["snow_depletion_steepness_log"]),
+        snow_depletion_centre=jnp.exp(params["snow_depletion_centre_log"]),
+        t_softplus_sharpness=jnp.exp(params["t_softplus_sharpness_log"]),
+        swe_softplus_sharpness=jnp.exp(params["swe_softplus_sharpness_log"]),
+        # > 1
+        ddf_relative_ice=jnp.exp(params["ddf_relative_ice_minus_one_log"]) + 1.0,
+        # No constraints
+        snow_to_rain_centre=params["snow_to_rain_centre"],
+    )
+    return params

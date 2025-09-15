@@ -10,12 +10,14 @@ class GRUBaseline(eqx.Module):
     init_h: jnp.ndarray 
 
     def __init__(self, input_size, output_size, h_size, h_scale, key):
-        key1, key2, key3 = jax.random.split(key, 3)
-        self.rnn = eqx.nn.GRUCell(input_size=input_size, hidden_size=h_size, key=key1)
-        self.out = eqx.nn.Linear(h_size, output_size, key=key2)
-        self.init_h = jax.random.normal(key3, shape=(h_size,)) * h_scale
+        keys = jax.random.split(key, 3)
+        keys = iter(keys)
+        
+        self.rnn = eqx.nn.GRUCell(input_size=input_size, hidden_size=h_size, key=next(keys))
+        self.out = eqx.nn.Linear(h_size, output_size, key=next(keys))
+        self.init_h = jax.random.normal(next(keys), shape=(h_size,)) * h_scale
 
-    def __call__(self, x, initial_h=None):
+    def __call__(self, x, initial_h=None, return_series=False):
         precipitation = x["precipitation"]
         temperature = x["temperature"]
         time, height, width = temperature.shape
@@ -31,35 +33,50 @@ class GRUBaseline(eqx.Module):
 
         batched_rnn = jax.vmap(self.rnn, in_axes=0)
         batched_out = jax.vmap(self.out)
-        
-        def step(h, x_t):
-            h_next = batched_rnn(x_t, h)
-            y = batched_out(h_next).squeeze(-1)
-            return h_next, y
 
-        final_h_flat, smb_flat = jax.lax.scan(step, h0_flat, inputs_flat)
-        smb = smb_flat.reshape(time, height, width)
+        if return_series:
+            def scan_step(h, x_t):
+                h_next = batched_rnn(x_t, h)
+                y = batched_out(h_next).squeeze(-1)
+                return h_next, y
+            scan_step = jax.remat(scan_step)
+            
+            final_h_flat, smb_flat = jax.lax.scan(scan_step, h0_flat, inputs_flat)
+            smb = smb_flat.reshape(time, height, width)
+
+        else:
+            def scan_step(carry, x_t):
+                h, y_acc = carry
+                h_next = batched_rnn(x_t, h)
+                y = batched_out(h_next).squeeze(-1)
+                return (h_next, y_acc + y), None
+            scan_step = jax.remat(scan_step)
+
+            y0 = batched_out(h0_flat).squeeze(-1)
+            carry = (h0_flat, jnp.zeros_like(y0))
+            (final_h_flat, smb_flat), _ = jax.lax.scan(scan_step, carry, inputs_flat)
+            smb = smb_flat.reshape(height, width)
+        
         final_h = final_h_flat.reshape(height, width, -1)
         return smb, final_h
 
-        
-@jax.jit
-def run_model(trainable_params, static_params, x, initial_h=None):
+
+def run_model(trainable_params, static_params, x, initial_h=None, return_series=False):
     """
     Run the model over time series of precipitation and temperature.
 
     Args:
-        trainable_params (GRUBaseline): The full model
+        trainable_params (PyTree): Full model
         static_params (PyTree): Empty dict, just for interface compatibility
         x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
-        initial_h (jnp.ndarray, Optional): Initial GRU state (H, W)
+        initial_h (jnp.ndarray, Optional): Initial GRU state (H, W, hidden)
 
     Returns:
-        smb_series (jnp.ndarray): Surface mass balance predictions (T, H, W)
-        h (jnp.ndarray): Updated hidden state (H, W)
+        smb_series (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
+        h (jnp.ndarray): Updated hidden state (H, W, hidden)
     """
-    smb_series, h = trainable_params(x, initial_h)
-    return smb_series, h
+    smb, h = trainable_params["gru"](x, initial_h, return_series)
+    return smb, h
 
 
 def get_initial_model_parameters(key=None):
@@ -67,11 +84,11 @@ def get_initial_model_parameters(key=None):
     Initialise GRU parameters.
     
     Returns:
-        trainable_params (GRUBaseline): The full model
+        trainable_params (GRUBaseline): Full model
         static_params (dict): Empty dict, just for interface compatibility
     """
     if key is None:
-        key = jax.random.PRNGKey(constants.default_key)
+        key = jax.random.PRNGKey(constants.default_rng_key)
 
     model = GRUBaseline(
         constants.gru_input_size, 
@@ -80,4 +97,4 @@ def get_initial_model_parameters(key=None):
         constants.gru_initial_h_scale, 
         key
     )
-    return model, {}  # eqx's Module is PyTree
+    return {"gru": model}, {}  # eqx's Module is PyTree
