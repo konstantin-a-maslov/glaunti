@@ -4,6 +4,7 @@ import equinox as eqx
 
 import glaunti.ti_model
 from glaunti.corr_submodules import Corrector2dBranch, Corrector1dBranch
+import utils.activations
 import constants
 
 
@@ -88,7 +89,7 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     Args:
         trainable_params (PyTree): Set of trainable parameters
         static_params (PyTree): Set of non-trainable parameters
-        x (PyTree): Dictionary with keys 'precipitation' (T, H, W), 'temperature' (T, H, W), 'corrector_fields' (C, H, W) and 'corrector_aux' (2, T_sub)
+        x (PyTree): Dictionary with keys 'precipitation' (T, H, W), 'temperature' (T, H, W), 'corrector_fields' (C2d, H, W) and 'corrector_aux' (C1d, T_sub)
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
 
     Returns:
@@ -109,7 +110,7 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     ti_params["prec_scale"] = ti_params["prec_scale"] * jnp.exp(d1)
     ti_params["ddf_snow"] = ti_params["ddf_snow"] * jnp.exp(d2)
     ti_params["ddf_relative_ice"] = ti_params["ddf_relative_ice"] * jnp.exp(d3) # explicitly allow < 1.0 here
-    initial_swe = initial_swe + d4
+    initial_swe = utils.activations.softplus_t(ti_params["swe_softplus_sharpness"], initial_swe + d4)
 
     smb, swe = glaunti.ti_model.run_model_unconstrained(ti_params, x, initial_swe, return_series)
 
