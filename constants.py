@@ -4,7 +4,7 @@ import pandas
 
 # Data
 data_folder = "data"
-cache = True
+use_cache = True
 
 
 # Conventions/definitions
