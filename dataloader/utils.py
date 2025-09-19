@@ -1,18 +1,9 @@
-def cache(use_cache=True):
+import functools
+
+
+def cache(use_cache=True, maxsize=None, typed=False):
     def decorator(retrieve_func):
         if not use_cache:
             return retrieve_func
-            
-        cache_obj = {}
-        
-        def wrapper(*args):
-            if args in cache_obj:
-                return cache_obj[args]
-            output = retrieve_func(*args)
-            cache_obj[args] = output
-            return output
-            
-        wrapper.cache_obj = cache_obj
-        return wrapper
-
+        return functools.lru_cache(maxsize=maxsize, typed=typed)(retrieve_func)
     return decorator
