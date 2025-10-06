@@ -7,6 +7,7 @@ import pyproj
 import os
 
 import utils.serialise
+import dataloader.prefetcher
 from dataloader.utils import cache
 import constants
 
@@ -38,18 +39,22 @@ def traverse_years(glacier):
     for year in range(start_year, end_year + 1):
         yield year
 
-    
+
 @cache(use_cache=constants.use_cache)
-def retrieve_features(glacier, year, retrieve_corrector_predictors=False, retrieve_facies=False):
+def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False):
+    if geometry_year is None:
+        geometry_year = year
+        
     if retrieve_facies and not retrieve_corrector_predictors:
         raise ValueError("If facies are fetched, whole corrector input fields should be constructed with retrieve_corrector_predictors=True!")
         
     # always load all available smb records, t, p and outlines
     y = retrieve_smb_records(glacier, year)
     begin_date, midseason_date, end_date = extract_season_dates(y[0])
-    y = split_smb_records_by_seasons(y, begin_date, midseason_date, end_date)
+    weight_point_smb(y[1], begin_date, midseason_date, end_date)
+    # y = split_smb_records_by_seasons(y, begin_date, midseason_date, end_date)
     
-    outlines = retrieve_outlines(glacier, year)
+    outlines = retrieve_outlines(glacier, geometry_year)
 
     x = {
         "outlines": outlines,
@@ -64,17 +69,17 @@ def retrieve_features(glacier, year, retrieve_corrector_predictors=False, retrie
         summer = slice(midseason_date, end_date)
         
         x["winter"] = {
-            "temperature": temperature.sel(time=winter).data,
-            "precipitation": precipitation.sel(time=winter).data,
+            "temperature": temperature.sel(time=winter),
+            "precipitation": precipitation.sel(time=winter),
         }
         x["summer"] = {
-            "temperature": temperature.sel(time=summer).data,
-            "precipitation": precipitation.sel(time=summer).data,
+            "temperature": temperature.sel(time=summer),
+            "precipitation": precipitation.sel(time=summer),
         }
     else:
         x["annual"] = {
-            "temperature": temperature.data,
-            "precipitation": precipitation.data,
+            "temperature": temperature,
+            "precipitation": precipitation,
         }
     
     # if retrieve_corrector_predictors is True, load and normalise elev, elev_stddev and monthly averaged t and p
@@ -97,15 +102,17 @@ def retrieve_features(glacier, year, retrieve_corrector_predictors=False, retrie
     return x, y
 
     
-def prefetch_features(glacier, year, retrieve_corrector_predictors=False, retrieve_facies=False): 
-    raise NotImplementedError() # TODO?
-
-
-def normalise_features(x):
-    normalisation_factors = retrieve_normalisation_factors()
-    for feature in ["elevation", "elevation_std", "t_monthly", "p_monthly"]:
-        x[feature] /= normalisation_factors[feature]
-    return x
+def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False):
+    def _task():
+        x, y = retrieve_xy(
+            glacier,
+            year,
+            geometry_year=geometry_year,
+            retrieve_corrector_predictors=retrieve_corrector_predictors,
+            retrieve_facies=retrieve_facies,
+        )
+        return x, y
+    return dataloader.prefetcher.submit(_task)
 
 
 # Elementary retrievers
@@ -253,7 +260,7 @@ def retrieve_normalisation_factors():
     return normalisation_factors
     
 
-# Conversions/extractions
+# Conversions/extractions/helpers
 def extract_season_dates(total_smb_for_one_year):
     begin_date = total_smb_for_one_year.begin_date.iloc[0]
     midseason_date = total_smb_for_one_year.midseason_date.iloc[0]
@@ -261,6 +268,39 @@ def extract_season_dates(total_smb_for_one_year):
     return begin_date, midseason_date, end_date
 
 
+def weight_point_smb(point_smb, begin_date, midseason_date, end_date):
+    point_smb["weight"] = 0.0
+
+    point_smb["begin_date_tmstp"] = pandas.to_datetime(point_smb["begin_date"], format="%Y-%m-%d")
+    point_smb["end_date_tmstp"] = pandas.to_datetime(point_smb["end_date"], format="%Y-%m-%d")
+    
+    begin_date = pandas.Timestamp(begin_date)
+    end_date = pandas.Timestamp(end_date)
+    if not pandas.isna(midseason_date):
+        midseason_date = pandas.Timestamp(midseason_date)
+    
+    point_smb.loc[point_smb.balance_code == "annual", "weight"] = _gaussian_kernel((point_smb.begin_date_tmstp - begin_date).dt.days) * \
+        _gaussian_kernel((point_smb.end_date_tmstp - end_date).dt.days)
+    if not pandas.isna(midseason_date):
+        point_smb.loc[point_smb.balance_code == "winter", "weight"] = _gaussian_kernel((point_smb.begin_date_tmstp - begin_date).dt.days) * \
+            _gaussian_kernel((point_smb.end_date_tmstp - midseason_date).dt.days)
+        point_smb.loc[point_smb.balance_code == "summer", "weight"] = _gaussian_kernel((point_smb.begin_date_tmstp - midseason_date).dt.days) * \
+            _gaussian_kernel((point_smb.end_date_tmstp - end_date).dt.days)
+    
+    return point_smb
+
+
+def _gaussian_kernel(d, decay_rate=constants.point_smb_weight_decay_rate):
+    return np.exp(-(d / decay_rate)**2)
+    
+
+def normalise_features(x):
+    normalisation_factors = retrieve_normalisation_factors()
+    for feature in ["elevation", "elevation_std", "t_monthly", "p_monthly"]:
+        x[feature] /= normalisation_factors[feature]
+    return x
+    
+    
 def downscale_temperature(temperature, elevation, orography, temperature_lapse_rate=constants.temperature_lapse_rate):
     temperature_downscaled = temperature + temperature_lapse_rate * (elevation - orography)
     return temperature_downscaled
@@ -269,7 +309,7 @@ def downscale_temperature(temperature, elevation, orography, temperature_lapse_r
 def convert_latlon_to_rowcol(point_smb_df, target_crs, rst_transform, source_crs="EPSG:4326"):
     crs_transformer = pyproj.Transformer.from_crs(source_crs, target_crs, always_xy=True)
     point_smb_df[["row", "col"]] = point_smb_df.apply(
-        lambda x: _latlon_to_rowcol(x["lat"], x["lon"], crs_transformer, rst_transform),
+        lambda x: _latlon_to_rowcol(x["latitude"], x["longitude"], crs_transformer, rst_transform),
         axis=1, 
     ) # TODO: Consider vectorising instead of .apply
     return point_smb_df
@@ -279,80 +319,3 @@ def _latlon_to_rowcol(lat, lon, crs_transformer, rst_transform):
     x, y = crs_transformer.transform(lon, lat)
     row, col = rasterio.transform.rowcol(rst_transform, x, y)
     return pandas.Series({"row": row, "col": col})
-
-
-
-
-
-
-
-
-######
-from concurrent.futures import ThreadPoolExecutor, Future
-from dataclasses import dataclass
-import itertools
-
-import constants
-from . import retrieve_features  # your function
-
-# One shared executor for all prefetch tasks
-_PREFETCH_EXEC = ThreadPoolExecutor(max_workers=getattr(constants, "prefetch_workers", 2))
-
-def _materialize(obj):
-    """Optionally force-load xarray objects to make 'get()' return fully in-memory results."""
-    try:
-        return obj.load() if hasattr(obj, "load") else obj
-    except Exception:
-        return obj
-
-def _walk_and_materialize(tree):
-    if isinstance(tree, dict):
-        return {k: _walk_and_materialize(v) for k, v in tree.items()}
-    if isinstance(tree, (list, tuple)):
-        t = type(tree)
-        return t(_walk_and_materialize(v) for v in tree)
-    return _materialize(tree)
-
-@dataclass
-class PrefetchHandle:
-    _future: Future
-
-    def get(self, timeout=None):
-        """Block until ready and return (x, y). Propagates exceptions."""
-        return self._future.result(timeout=timeout)
-
-    def done(self):
-        return self._future.done()
-
-    def cancel(self):
-        return self._future.cancel()
-
-def prefetch_features(
-    glacier,
-    year,
-    *,
-    retrieve_corrector_predictors=False,
-    retrieve_facies=False,
-    realize=True,   # if True, .get() returns fully loaded (materialized) arrays
-):
-    """
-    Submit a background task that calls retrieve_features(...) and returns a PrefetchHandle.
-    Use handle.get() later to obtain (x, y).
-    """
-    def _task():
-        x, y = retrieve_features(
-            glacier,
-            year,
-            retrieve_corrector_predictors=retrieve_corrector_predictors,
-            retrieve_facies=retrieve_facies,
-        )
-        if realize:
-            x = _walk_and_materialize(x)
-            y = _walk_and_materialize(y)
-        return x, y
-
-    fut = _PREFETCH_EXEC.submit(_task)
-    return PrefetchHandle(fut)
-
-def shutdown_prefetch():
-    _PREFETCH_EXEC.shutdown(wait=False, cancel_futures=True)

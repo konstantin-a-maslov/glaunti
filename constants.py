@@ -5,13 +5,16 @@ import pandas
 # Data
 data_folder = "data"
 use_cache = True
+test_fold = 0
+
+prefetch_workers = 2
 
 
 # Conventions/definitions
-default_hydrological_year_start_date = pandas.Timestamp("1990-10-01")
-default_mid_season_date = pandas.Timestamp("1990-05-01")
 study_period_start_year = 1995
 initialisation_period_start_year = 1990
+
+point_smb_weight_decay_rate = 26 # days
 
 
 # Conversions
@@ -47,7 +50,9 @@ gru_initial_h_scale = 0.01
 
 
 # Corrector parameters
-corrector_field_size = 12 # outlines(1) + elev(1) + elev_stddev(1) + facies fields(8) + facies conf(1)
+n_facies_classes = 8
+
+corrector_field_size = 12 # outlines(1) + elev(1) + elev_stddev(1) + facies(8) + facies conf(1)
 corrector_aux_size = 2 
 corrector_output_size = 4
 n_filters_2d_branch = 32
@@ -57,7 +62,7 @@ n_stages_1d_branch = 2
 
 
 # Calibration
-initial_learning_rate = 1e-3
+learning_rate = 1e-3
 
 
 # Misc
