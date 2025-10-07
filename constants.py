@@ -14,7 +14,7 @@ prefetch_workers = 2
 study_period_start_year = 1995
 initialisation_period_start_year = 1990
 
-point_smb_weight_decay_rate = 26 # days
+point_smb_weight_decay_rate = 6.355375070295649 # days
 
 
 # Conversions
@@ -53,7 +53,7 @@ gru_initial_h_scale = 0.01
 n_facies_classes = 8
 
 corrector_field_size = 12 # outlines(1) + elev(1) + elev_stddev(1) + facies(8) + facies conf(1)
-corrector_aux_size = 2 
+climate_monthly_size = 2 
 corrector_output_size = 4
 n_filters_2d_branch = 32
 n_stages_2d_branch = 3

@@ -50,12 +50,10 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
         
     # always load all available smb records, t, p and outlines
     y = retrieve_smb_records(glacier, year)
-    begin_date, midseason_date, end_date = extract_season_dates(y[0])
-    weight_point_smb(y[1], begin_date, midseason_date, end_date)
-    # y = split_smb_records_by_seasons(y, begin_date, midseason_date, end_date)
+    begin_date, midseason_date, end_date = extract_season_dates(y["total"])
+    y["point"] = weight_point_smb(y["point"], begin_date, midseason_date, end_date)
     
     outlines = retrieve_outlines(glacier, geometry_year)
-
     x = {
         "outlines": outlines,
     }
@@ -84,20 +82,44 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
     
     # if retrieve_corrector_predictors is True, load and normalise elev, elev_stddev and monthly averaged t and p
     if retrieve_corrector_predictors:
-        raise NotImplementedError()
+        x.update({
+            "elevation": retrieve_elevation(glacier, year),
+            "elevation_std": retrieve_elevation_std(glacier, year), 
+            "t_monthly": temperature.resample(time="MS").mean().weighted(outlines).mean(dim=("x", "y")), 
+            "p_monthly": precipitation.resample(time="MS").mean().weighted(outlines).mean(dim=("x", "y")),
+        })
         x = normalise_features(x)
 
     # if retrieve_facies is True and facies are available, load facies, otherwise prepare a placeholder (0 for all bands?)
     if retrieve_facies:
-        raise NotImplementedError()
+        x["facies"] = retrieve_glacier_facies(glacier, year)
     else:
-        pass
+        x["facies"] = retrieve_facies_placeholder(glacier)
 
     # stack corrector inputs
     if retrieve_corrector_predictors:
-        raise NotImplementedError()
-
-    # TODO: CONSIDER MATERIALISATION IN PLACE FOR BETTER PERFORMANCE HERE
+        corrector_fields = xarray.concat(
+            [
+                x["outlines"].expand_dims(band=["outlines"]).rename("outlines"),
+                x["elevation"].expand_dims(band=["elevation"]).rename("elevation"),
+                x["elevation_std"].expand_dims(band=["elevation_std"]).rename("elevation_std"),
+                x["facies"].rename("facies")
+            ],
+            dim="band"
+        )
+        corrector_fields = corrector_fields.transpose("band", "y", "x")
+        corrector_fields = corrector_fields.rename("corrector_fields")
+        x["corrector_fields"] = corrector_fields
+        del x["elevation"], x["elevation_std"], x["facies"]
+        
+        climate_monthly = xarray.concat(
+            [x["t_monthly"].rename("t"), x["p_monthly"].rename("p")],
+            dim="var"
+        )
+        climate_monthly = climate_monthly.assign_coords(var=["t", "p"])
+        climate_monthly = climate_monthly.rename("climate_monthly")
+        x["climate_monthly"] = climate_monthly
+        del x["t_monthly"], x["p_monthly"]
     
     return x, y
 
@@ -138,7 +160,10 @@ def retrieve_smb_records(glacier, year):
         crs, transform = retrieve_crs_and_transform(glacier)
         point_smb = convert_latlon_to_rowcol(point_smb, crs, transform)
 
-    return total_smb, point_smb
+    return {
+        "total": total_smb, 
+        "point": point_smb,
+    }
 
 
 @cache(use_cache=constants.use_cache)
@@ -190,7 +215,7 @@ def retrieve_elevation_std(glacier, year):
 
 
 @cache(use_cache=constants.use_cache)
-def retrieve_facies(glacier, year):
+def retrieve_glacier_facies(glacier, year):
     facies_model = retrieve_facies_model(glacier)
     if facies_model is None or year not in facies_model.year:
         facies = retrieve_facies_placeholder(glacier)
@@ -201,7 +226,17 @@ def retrieve_facies(glacier, year):
 
 @cache(use_cache=constants.use_cache)
 def retrieve_facies_placeholder(glacier):
-    raise NotImplementedError()
+    template = retrieve_outline_model(glacier).isel(year=0).reset_coords(names="year", drop=True)
+    facies = xarray.zeros_like(template, dtype=np.float32) \
+        .expand_dims(band=constants.n_facies_classes + 1) \
+        .assign_coords(band=[
+            "ice", "snow", "debris", "firn", "shadow", 
+            "superimposed-ice", "cloud", "water", "confidence",
+        ]) \
+        .rename("facies")
+    facies = facies.rio.write_crs(template.rio.crs)
+    facies = facies.rio.write_transform(template.rio.transform())
+    return facies
     
 
 @cache(use_cache=constants.use_cache)
@@ -230,7 +265,7 @@ def retrieve_facies_model(glacier):
     if not os.path.exists(facies_model_path):
         return None
     facies_model = xarray.open_dataset(facies_model_path, decode_coords="all", engine="netcdf4")
-    facies_model = facies_model["facies"]
+    facies_model = facies_model["facies"].fillna(0)
     return facies_model.astype(np.float32)
 
 

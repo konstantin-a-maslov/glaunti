@@ -65,8 +65,8 @@ class Corrector(eqx.Module):
         return y_2d_branch_cropped
 
     def _compute_1d_branch(self, x):
-        corrector_aux = x["corrector_aux"]
-        y_1d_branch = self.branch_1d(corrector_aux)
+        climate_monthly = x["climate_monthly"]
+        y_1d_branch = self.branch_1d(climate_monthly)
         return y_1d_branch
 
     def _pad_to_multiple_hw(self, x):
@@ -89,7 +89,7 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     Args:
         trainable_params (PyTree): Set of trainable parameters
         static_params (PyTree): Set of non-trainable parameters
-        x (PyTree): Dictionary with keys 'precipitation' (T, H, W), 'temperature' (T, H, W), 'corrector_fields' (C2d, H, W) and 'corrector_aux' (C1d, T_sub)
+        x (PyTree): Dictionary with keys 'precipitation' (T, H, W), 'temperature' (T, H, W), 'corrector_fields' (C2d, H, W) and 'climate_monthly' (C1d, T_sub)
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
 
     Returns:
@@ -137,7 +137,7 @@ def get_initial_model_parameters(ti_params=None, ti_params_static=True, key=None
 
     model = Corrector(
         input_size_2d=constants.corrector_field_size, 
-        input_size_1d=constants.corrector_aux_size,
+        input_size_1d=constants.climate_monthly_size,
         output_size=constants.corrector_output_size,
         n_filters_2d_branch=constants.n_filters_2d_branch,
         n_stages_2d_branch=constants.n_stages_2d_branch,
