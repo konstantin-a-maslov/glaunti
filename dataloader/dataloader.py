@@ -30,14 +30,7 @@ def traverse_train_val_folds(dataset_index):
 def traverse_glaciers(fold):
     glaciers = sorted(fold.name.unique())
     for glacier in glaciers:
-        yield glacier # [633] CONSIDER RETURNING A WHOLE RECORD
-
-
-def traverse_years(glacier):
-    start_year = constants.initialisation_period_start_year
-    end_year = glacier.end_year # [633] BUG HERE, GLACIER IS A STRING, FINALISE
-    for year in range(start_year, end_year + 1):
-        yield year
+        yield fold[fold.name == glacier].iloc[0]
 
 
 @cache(use_cache=constants.use_cache)
@@ -51,7 +44,8 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
     # always load all available smb records, t, p and outlines
     y = retrieve_smb_records(glacier, year)
     begin_date, midseason_date, end_date = extract_season_dates(y["total"])
-    y["point"] = weight_point_smb(y["point"], begin_date, midseason_date, end_date)
+    if y["point"] is not None:
+        y["point"] = weight_point_smb(y["point"], begin_date, midseason_date, end_date)
     
     outlines = retrieve_outlines(glacier, geometry_year)
     x = {
@@ -105,7 +99,8 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
                 x["elevation_std"].expand_dims(band=["elevation_std"]).rename("elevation_std"),
                 x["facies"].rename("facies")
             ],
-            dim="band"
+            dim="band",
+            coords="minimal",
         )
         corrector_fields = corrector_fields.transpose("band", "y", "x")
         corrector_fields = corrector_fields.rename("corrector_fields")
@@ -155,7 +150,10 @@ def retrieve_smb_records(glacier, year):
         point_smb = point_smb[point_smb.year == year]
         
         if len(point_smb) == 0:
-            return total_smb, None
+            return {
+                "total": total_smb, 
+                "point": None,
+            }
 
         crs, transform = retrieve_crs_and_transform(glacier)
         point_smb = convert_latlon_to_rowcol(point_smb, crs, transform)
