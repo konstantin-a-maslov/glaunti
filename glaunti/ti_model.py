@@ -40,7 +40,9 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
     """
     precipitation = x["precipitation"]
     temperature = x["temperature"]
-    inputs = (precipitation, temperature)
+    time, _, _ = temperature.shape
+    w = jnp.ones((time, )).at[0].set(0.5).at[-1].set(0.5)
+    inputs = (precipitation, temperature, w)
 
     if initial_swe is None:
         _, height, width = temperature.shape
@@ -48,20 +50,20 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
 
     if return_series:
         def scan_step(prev_swe, inputs_d):
-            precipitation_d, temperature_d = inputs_d
-            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe)
+            precipitation_d, temperature_d, w_d = inputs_d
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d)
             return swe, smb 
-        scan_step = jax.remat(scan_step)
+        # scan_step = jax.remat(scan_step)
         
         swe, smb = jax.lax.scan(scan_step, initial_swe, inputs)
         
     else:
         def scan_step(carry, inputs_d):
-            precipitation_d, temperature_d = inputs_d
+            precipitation_d, temperature_d, w_d = inputs_d
             prev_swe, smb_acc = carry
-            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe)
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d)
             return (swe, smb_acc + smb), None 
-        scan_step = jax.remat(scan_step)
+        # scan_step = jax.remat(scan_step)
         
         carry = (initial_swe, jnp.zeros_like(initial_swe))
         (swe, smb), _ = jax.lax.scan(scan_step, carry, inputs)
@@ -69,7 +71,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
     return smb, swe
 
 
-def run_one_day_iteration(params, precipitation, temperature, prev_swe):
+def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d):
     """
     Make one-day model timestep.
 
@@ -78,6 +80,7 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe):
         precipitation (jnp.ndarray): Precipitation (H, W)
         temperature (jnp.ndarray): Temperature (H, W)
         prev_swe (jnp.ndarray): Accumulated snow water equivalent (H, W)
+        w_d (jnp.ndarray): Weight to avoid double-counting edge days (scalar 1 or 0.5)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance prediction (H, W)
@@ -102,9 +105,9 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe):
     
     swe = utils.activations.softplus_t(
         swe_softplus_sharpness, 
-        prev_swe + prec_scale * solid_precipitation - ddf_snow * t_pos_snow
+        prev_swe + w_d * (prec_scale * solid_precipitation - ddf_snow * t_pos_snow)
     )
-    smb = prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice)
+    smb = w_d * (prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice))
     return smb, swe
 
 

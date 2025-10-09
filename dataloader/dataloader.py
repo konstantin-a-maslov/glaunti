@@ -27,6 +27,11 @@ def traverse_train_val_folds(dataset_index):
         yield val_fold, train_folds
 
 
+def get_test_fold(dataset_index):
+    test_fold = dataset_index[dataset_index.fold == constants.test_fold]
+    return test_fold
+
+
 def traverse_glaciers(fold):
     glaciers = sorted(fold.name.unique())
     for glacier in glaciers:
@@ -321,10 +326,6 @@ def weight_point_smb(point_smb, begin_date, midseason_date, end_date):
             _gaussian_kernel((point_smb.end_date_tmstp - end_date).dt.days)
     
     return point_smb
-
-
-def _gaussian_kernel(d, decay_rate=constants.point_smb_weight_decay_rate):
-    return np.exp(-(d / decay_rate)**2)
     
 
 def normalise_features(x):
@@ -348,7 +349,24 @@ def convert_latlon_to_rowcol(point_smb_df, target_crs, rst_transform, source_crs
     return point_smb_df
 
 
+def x_to_raw_numpy(x):
+    if isinstance(x, dict):
+        return {k: x_to_raw_numpy(v) for k, v in x.items()}
+    elif isinstance(x, (list, tuple)):
+        t = [x_to_raw_numpy(v) for v in x]
+        return type(x)(t)
+    elif isinstance(x, xarray.DataArray):
+        return x.data
+    else:
+        return x
+
+
+def _gaussian_kernel(d, decay_rate=constants.point_smb_weight_decay_rate):
+    return np.exp(-(d / decay_rate)**2)
+
+    
 def _latlon_to_rowcol(lat, lon, crs_transformer, rst_transform):
     x, y = crs_transformer.transform(lon, lat)
     row, col = rasterio.transform.rowcol(rst_transform, x, y)
     return pandas.Series({"row": row, "col": col})
+    

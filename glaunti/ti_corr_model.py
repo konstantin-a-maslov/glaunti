@@ -116,8 +116,8 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
 
     if return_corrections:
         return smb, swe, (d1, d2, d3, d4)
-    else:
-        return smb, swe
+
+    return smb, swe
 
 
 def get_initial_model_parameters(ti_params=None, ti_params_static=True, key=None):
@@ -153,7 +153,7 @@ def get_initial_model_parameters(ti_params=None, ti_params_static=True, key=None
 
     if ti_params_static:
         return {"corrector": model}, {**ti_static_params, **ti_trainable_params}  # eqx's Module is PyTree
-    else:
-        params = {"corrector": model}
-        params.update(ti_trainable_params)
-        return params, ti_static_params
+
+    params = {"corrector": model}
+    params.update(ti_trainable_params)
+    return params, ti_static_params
