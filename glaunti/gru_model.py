@@ -27,34 +27,45 @@ class GRUBaseline(eqx.Module):
 
         if initial_h is None:
             h0 = jnp.broadcast_to(self.init_h, (height, width, self.init_h.shape[0]))
+            is_continuation = False
         else: 
             h0 = initial_h
+            is_continuation = True
         h0_flat = h0.reshape(height * width, -1)
 
+        w = jnp.ones((time, )).at[0].set(0.5).at[-1].set(0.5)
+        m_step = jnp.ones((time, ))
+        if is_continuation:
+            m_step = m_step.at[0].set(0.0)
+        
         batched_rnn = jax.vmap(self.rnn, in_axes=0)
         batched_out = jax.vmap(self.out)
 
         if return_series:
-            def scan_step(h, x_t):
-                h_next = batched_rnn(x_t, h)
-                y = batched_out(h_next).squeeze(-1)
+            def scan_step(h, inputs_t):
+                x_t, w_t, m_t = inputs_t
+                h_prop = batched_rnn(x_t, h)
+                h_next = jnp.where(m_t > 0.5, h_prop, h)
+                y = w_t * batched_out(h_next).squeeze(-1)
                 return h_next, y
-            scan_step = jax.remat(scan_step)
+            # scan_step = jax.remat(scan_step)
             
-            final_h_flat, smb_flat = jax.lax.scan(scan_step, h0_flat, inputs_flat)
+            final_h_flat, smb_flat = jax.lax.scan(scan_step, h0_flat, (inputs_flat, w, m_step))
             smb = smb_flat.reshape(time, height, width)
 
         else:
-            def scan_step(carry, x_t):
+            def scan_step(carry, inputs_t):
                 h, y_acc = carry
-                h_next = batched_rnn(x_t, h)
+                x_t, w_t, m_t = inputs_t
+                h_prop = batched_rnn(x_t, h)
+                h_next = jnp.where(m_t > 0.5, h_prop, h)
                 y = batched_out(h_next).squeeze(-1)
-                return (h_next, y_acc + y), None
-            scan_step = jax.remat(scan_step)
+                return (h_next, y_acc + w_t * y), None
+            # scan_step = jax.remat(scan_step)
 
             y0 = batched_out(h0_flat).squeeze(-1)
             carry = (h0_flat, jnp.zeros_like(y0))
-            (final_h_flat, smb_flat), _ = jax.lax.scan(scan_step, carry, inputs_flat)
+            (final_h_flat, smb_flat), _ = jax.lax.scan(scan_step, carry, (inputs_flat, w, m_step))
             smb = smb_flat.reshape(height, width)
         
         final_h = final_h_flat.reshape(height, width, -1)
