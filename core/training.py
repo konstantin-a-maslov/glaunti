@@ -1,5 +1,6 @@
 import jax
 import optax
+from functools import partial
 
 import constants
 
@@ -14,6 +15,7 @@ def get_optimiser():
     return optimiser
 
 
+@partial(jax.jit, static_argnums=0, donate_argnums=3)
 def make_step(optimiser, grads, params, opt_state):
     updates, opt_state = optimiser.update(grads, opt_state, params)
     params = optax.apply_updates(params, updates)

@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas
 
 import glaunti.ti_model
@@ -11,7 +12,7 @@ def loss(
     trainable_params, static_params, model_callable, 
     glacier, 
     ti=False, ti_corr=False, retrieve_facies=False, 
-    lambda1=constants.default_lambda1, 
+    lambda1=constants.lambda1, 
     lambda2=constants.default_lambda2, lambda3=constants.default_lambda3, lambda4=constants.default_lambda4, 
     return_aux=True,
 ):   
@@ -32,35 +33,31 @@ def loss(
             retrieve_corrector_predictors=ti_corr, 
             retrieve_facies=retrieve_facies,
         )
-        x = dataloader.x_to_raw_numpy(x)
         
         if "annual" in x:
             x_annual = {k: v for k, v in x.items() if k != "annual"}
             x_annual.update(x["annual"])
-            if ti_corr:
-                smb_annual, swe_or_h, ds = model_callable(trainable_params, static_params, x_annual, swe_or_h)
-            else:
-                smb_annual, swe_or_h = model_callable(trainable_params, static_params, x_annual, swe_or_h)
+            ys = model_callable(trainable_params, static_params, x_annual, swe_or_h)
+            smb_annual, swe_or_h = ys[0], ys[1]
+
         else:
             x_winter = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
             x_winter.update(x["winter"])
-            if ti_corr:
-                smb_winter, swe_or_h, _ = model_callable(trainable_params, static_params, x_winter, swe_or_h)
-            else:
-                smb_winter, swe_or_h = model_callable(trainable_params, static_params, x_winter, swe_or_h)
+            ys = model_callable(trainable_params, static_params, x_winter, swe_or_h)
+            smb_winter, swe_or_h = ys[0], ys[1]
             update_metrics(aux, smb_winter, y, x["outlines"], "winter")
 
             x_summer = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
             x_summer.update(x["summer"])
-            if ti_corr:
-                smb_summer, swe_or_h, ds = model_callable(trainable_params, static_params, x_summer, swe_or_h)
-            else: 
-                smb_summer, swe_or_h = model_callable(trainable_params, static_params, x_summer, swe_or_h)
+            ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
+            smb_summer, swe_or_h = ys[0], ys[1]
             update_metrics(aux, smb_summer, y, x["outlines"], "summer")
 
             smb_annual = smb_winter + smb_summer
+            
         update_metrics(aux, smb_annual, y, x["outlines"], "annual")
         if ti_corr:
+            ds = ys[2]
             update_ti_corr_regulariser(aux, ds, lambda3, lambda4)
 
     loss = 0.0
@@ -84,7 +81,15 @@ def loss(
     return loss + reg
 
 
-def init_swe_or_h(trainable_params, static_params, model_callable, glacier_name, retrieve_corrector_predictors, retrieve_facies):
+def init_swe_or_h(
+    trainable_params, 
+    static_params, 
+    model_callable, 
+    glacier_name, 
+    retrieve_corrector_predictors, 
+    retrieve_facies, 
+    last_numpy=True,
+):
     swe_or_h = None
 
     next_xy = dataloader.prefetch_xy(
@@ -99,31 +104,25 @@ def init_swe_or_h(trainable_params, static_params, model_callable, glacier_name,
             glacier_name, year + 1, 
             retrieve_corrector_predictors=retrieve_corrector_predictors, 
             retrieve_facies=retrieve_facies,
+            numpy=((year + 1 < constants.study_period_start_year) or last_numpy),
         )
-        x = dataloader.x_to_raw_numpy(x)
 
         if "annual" in x:
             x_annual = {k: v for k, v in x.items() if k != "annual"}
             x_annual.update(x["annual"])
-            if retrieve_corrector_predictors:
-                _, swe_or_h, _ = model_callable(trainable_params, static_params, x_annual, swe_or_h)
-            else:
-                _, swe_or_h = model_callable(trainable_params, static_params, x_annual, swe_or_h)
+            ys = model_callable(trainable_params, static_params, x_annual, swe_or_h)
+            swe_or_h = ys[1]
             
         else:
             x_winter = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
             x_winter.update(x["winter"])
-            if retrieve_corrector_predictors:
-                _, swe_or_h, _ = model_callable(trainable_params, static_params, x_winter, swe_or_h)
-            else:
-                _, swe_or_h = model_callable(trainable_params, static_params, x_winter, swe_or_h)
+            ys = model_callable(trainable_params, static_params, x_winter, swe_or_h)
+            swe_or_h = ys[1]
 
             x_summer = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
             x_summer.update(x["summer"])
-            if retrieve_corrector_predictors:
-                _, swe_or_h, _ = model_callable(trainable_params, static_params, x_summer, swe_or_h)
-            else:
-                _, swe_or_h = model_callable(trainable_params, static_params, x_summer, swe_or_h)
+            ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
+            swe_or_h = ys[1]
     
     return swe_or_h, next_xy
 
@@ -133,15 +132,17 @@ def update_metrics(aux, smb, y, outlines, balance_code):
     if point_smb is not None:
         point_smb = point_smb[point_smb.balance_code == balance_code]
         if len(point_smb) > 0:
-            for point in point_smb.itertuples():
-                aux[f"point_{balance_code}_n"] += point.weight
-                point_error = se(smb[point.row, point.col], point.balance)
-                aux[f"point_{balance_code}_error"] += (point.weight * point_error)
+            rows, cols = jnp.asarray(point_smb.row), jnp.asarray(point_smb.col)
+            balances = jnp.asarray(point_smb.balance)
+            weights = jnp.asarray(point_smb.weight)
+            err_acc, w_acc = _point_mse_add(smb, rows, cols, balances, weights)
+            aux[f"point_{balance_code}_n"] += w_acc
+            aux[f"point_{balance_code}_error"] += err_acc
             
     total_smb = y["total"][f"{balance_code}_balance"].iloc[0]
     if not pandas.isna(total_smb):
+        total_error = _total_mse_add(smb, outlines, total_smb)
         aux[f"total_{balance_code}_n"] += 1
-        total_error = se(jnp.sum(outlines * smb) / jnp.sum(outlines), total_smb)
         aux[f"total_{balance_code}_error"] += total_error
 
     if aux[f"point_{balance_code}_n"] > 0:
@@ -156,10 +157,27 @@ def update_metrics(aux, smb, y, outlines, balance_code):
 
     return aux
 
+
+@jax.jit
+def _point_mse_add(smb, rows, cols, balances, weights):
+    vals = smb[rows, cols]
+    diff  = vals - balances
+    err_acc = jnp.sum(weights * diff * diff)
+    w_acc   = jnp.sum(weights)
+    return err_acc, w_acc
+
+
+@jax.jit
+def _total_mse_add(smb, outlines, target_total):
+    denom = jnp.sum(outlines)
+    num   = jnp.sum(outlines * smb)
+    err   = (num / denom - target_total) ** 2
+    return err
+
     
 # Elementary losses
 def se(true, pred):
-    return (true - pred)**2
+    return jnp.square(true - pred)
 
 
 def ti_regulariser(params, lambda2):
@@ -167,7 +185,7 @@ def ti_regulariser(params, lambda2):
     init_ti_params = {**init_ti_params[0], **init_ti_params[1]}
     reg = 0.0
     for k, init_v in init_ti_params.items():
-        reg += ((params[k] - init_v) / init_v)**2
+        reg += jnp.square((params[k] - init_v) / init_v)
     reg = lambda2 * reg
     return reg
 
@@ -177,7 +195,7 @@ def update_ti_corr_regulariser(aux, ds, lambda3, lambda4):
     if not "reg_ti_corr" in aux:
         aux["reg_ti_corr_acc"] = 0
         aux["reg_ti_corr_n"] = 0
-    reg = lambda3 * (jnp.mean(d1**2) + jnp.mean(d2**2) + jnp.mean(d3**2) + jnp.mean(d4**2)) + \
+    reg = lambda3 * (jnp.mean(jnp.square(d1)) + jnp.mean(jnp.square(d2)) + jnp.mean(jnp.square(d3)) + jnp.mean(jnp.square(d4))) + \
         lambda4 * jnp.mean(se(d2, d3))
     aux["reg_ti_corr_acc"] += reg
     aux["reg_ti_corr_n"] += 1

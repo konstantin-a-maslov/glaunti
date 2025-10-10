@@ -39,7 +39,7 @@ def traverse_glaciers(fold):
 
 
 @cache(use_cache=constants.use_cache)
-def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False):
+def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False, numpy=True):
     if geometry_year is None:
         geometry_year = year
         
@@ -120,11 +120,14 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
         climate_monthly = climate_monthly.rename("climate_monthly")
         x["climate_monthly"] = climate_monthly
         del x["t_monthly"], x["p_monthly"]
+
+    if numpy:
+        x = x_to_raw_numpy(x)
     
     return x, y
 
     
-def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False):
+def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False, numpy=True):
     def _task():
         x, y = retrieve_xy(
             glacier,
@@ -132,6 +135,7 @@ def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
             geometry_year=geometry_year,
             retrieve_corrector_predictors=retrieve_corrector_predictors,
             retrieve_facies=retrieve_facies,
+            numpy=numpy,
         )
         return x, y
     return dataloader.prefetcher.submit(_task)
@@ -356,7 +360,7 @@ def x_to_raw_numpy(x):
         t = [x_to_raw_numpy(v) for v in x]
         return type(x)(t)
     elif isinstance(x, xarray.DataArray):
-        return x.data
+        return np.ascontiguousarray(x.data)
     else:
         return x
 
