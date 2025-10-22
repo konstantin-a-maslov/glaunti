@@ -18,22 +18,23 @@ def retrieve_dataset_index():
     return dataset_index
 
 
-def traverse_train_val_folds(dataset_index):
-    folds = dataset_index[dataset_index.fold != constants.test_fold]
-    fold_ids = sorted(folds.fold.unique())
-    for fold_id in fold_ids:
-        val_fold = dataset_index[dataset_index.fold == fold_id]
-        train_folds = dataset_index[dataset_index.fold != fold_id]
-        yield val_fold, train_folds
+def get_train_subset(dataset_index):
+    train_subset = dataset_index[~dataset_index.fold.isin({constants.test_fold, constants.val_fold})]
+    return train_subset
+
+    
+def get_val_subset(dataset_index):
+    val_subset = dataset_index[dataset_index.fold == constants.val_fold]
+    return val_subset
 
 
-def get_test_fold(dataset_index):
-    test_fold = dataset_index[dataset_index.fold == constants.test_fold]
-    return test_fold
+def get_test_subset(dataset_index):
+    test_subset = dataset_index[dataset_index.fold == constants.test_fold]
+    return test_subset
 
 
 def traverse_glaciers(fold):
-    glaciers = sorted(fold.name.unique())
+    glaciers = fold.name
     for glacier in glaciers:
         yield fold[fold.name == glacier].iloc[0]
 

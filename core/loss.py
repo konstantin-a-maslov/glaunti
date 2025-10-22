@@ -19,8 +19,8 @@ def loss(
     glacier_name, max_year, aux = glacier["name"], glacier["max_year"], {}
     for balance_code in ["annual", "winter", "summer"]:
         aux.update({
-            f"total_{balance_code}_error": 0, f"total_{balance_code}_n": 0, 
-            f"point_{balance_code}_error": 0, f"point_{balance_code}_n": 0,
+            f"total_{balance_code}_error": 0, f"total_{balance_code}_n": 0, f"total_{balance_code}_mse": None, 
+            f"point_{balance_code}_error": 0, f"point_{balance_code}_n": 0, f"point_{balance_code}_mse": None,
         })
     swe_or_h, next_xy = init_swe_or_h(
         trainable_params, static_params, model_callable, glacier_name, ti_corr, retrieve_facies
@@ -49,7 +49,10 @@ def loss(
 
             x_summer = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
             x_summer.update(x["summer"])
-            ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
+            if ti_corr:
+                ys = model_callable(trainable_params, static_params, x_summer, swe_or_h, ds=ys[2])
+            else:
+                ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
             smb_summer, swe_or_h = ys[0], ys[1]
             update_metrics(aux, smb_summer, y, x["outlines"], "summer")
 
@@ -161,17 +164,17 @@ def update_metrics(aux, smb, y, outlines, balance_code):
 @jax.jit
 def _point_mse_add(smb, rows, cols, balances, weights):
     vals = smb[rows, cols]
-    diff  = vals - balances
+    diff = vals - balances
     err_acc = jnp.sum(weights * diff * diff)
-    w_acc   = jnp.sum(weights)
+    w_acc = jnp.sum(weights)
     return err_acc, w_acc
 
 
 @jax.jit
 def _total_mse_add(smb, outlines, target_total):
     denom = jnp.sum(outlines)
-    num   = jnp.sum(outlines * smb)
-    err   = (num / denom - target_total) ** 2
+    num = jnp.sum(outlines * smb)
+    err = jnp.square((num / denom - target_total))
     return err
 
     

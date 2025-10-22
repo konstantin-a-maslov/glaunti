@@ -70,10 +70,17 @@ class Corrector(eqx.Module):
         return y_1d_branch
 
     def _pad_to_multiple_hw(self, x):
-        m = 2**self.branch_2d.n_stages
-        c, h, w = x.shape
-        pad_h = (m - (h % m)) % m
-        pad_w = (m - (w % m)) % m
+        BUCKETS = (
+            (32, 32), (64, 64), (128, 128),
+            (256, 256), (384, 384), (512, 512), 
+            (768, 768), (1024, 1024),
+        )
+        _, h, w = x.shape
+        for bh, bw in BUCKETS:
+            if (h <= bh) and (w <= bw):
+                pad_h = bh - h
+                pad_w = bw - w
+                break
         pad_spec = ((0, 0), (0, pad_h), (0, pad_w))
         x = jnp.pad(x, pad_spec, mode="constant", constant_values=0)
         return x, pad_h, pad_w
@@ -82,7 +89,7 @@ class Corrector(eqx.Module):
         return x[:, :orig_h, :orig_w]
     
 
-def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False, return_corrections=False):
+def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False, return_corrections=False, ds=None):
     """
     Run the model over time series of precipitation and temperature.
 
@@ -98,7 +105,8 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
         corrections (tuple of jnp.ndarray): Corrections of TI params (4, H, W)
     """
     params = {**static_params, **trainable_params}
-    ds = params["corrector"](x)
+    if ds is None:
+        ds = params["corrector"](x)
     d1, d2, d3, d4 = ds[0], ds[1], ds[2], ds[3]
     ti_params = glaunti.ti_model.resolve_param_constraints(params)
     

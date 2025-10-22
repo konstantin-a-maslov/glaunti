@@ -6,6 +6,7 @@ import pandas
 data_folder = "data"
 use_cache = True
 test_fold = 0
+val_fold = 1
 
 prefetch_workers = 2
 
@@ -62,7 +63,14 @@ n_stages_1d_branch = 2
 
 
 # Calibration
+n_epochs = 100
 learning_rate = 1e-3
+grad_norm_clip = 5
+
+lambda1 = 0.5
+default_lambda2 = 0.1
+default_lambda3 = 0.1
+default_lambda4 = 0.1
 
 
 # Misc
