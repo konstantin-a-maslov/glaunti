@@ -4,7 +4,7 @@ import utils.activations
 import constants
 
 
-def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False):
+def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False, residual=0.0):
     """
     Run the model over time series of precipitation and temperature with constrained parameters.
 
@@ -13,6 +13,7 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
         static_params (PyTree): Set of non-trainable parameters
         x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
+        residual (jnp.ndarray, Optional): Period residual for SMB and SWE (H, W)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
@@ -21,11 +22,11 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     params = {**static_params, **trainable_params}
     params = resolve_param_constraints(params) # Extract params, impose constraints where needed
 
-    smb, swe = run_model_unconstrained(params, x, initial_swe, return_series)
+    smb, swe = run_model_unconstrained(params, x, initial_swe, return_series, residual=residual)
     return smb, swe
 
 
-def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
+def run_model_unconstrained(params, x, initial_swe=None, return_series=False, residual=0.0):
     """
     Run the model over time series of precipitation and temperature with unconstrained parameters.
 
@@ -33,6 +34,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
         params (PyTree): Set of parameters
         x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
+        residual (jnp.ndarray, Optional): Period residual for SMB and SWE (H, W)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
@@ -42,6 +44,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
     temperature = x["temperature"]
     time, _, _ = temperature.shape
     w = jnp.ones((time, )).at[0].set(0.5).at[-1].set(0.5)
+    residual_d = residual / jnp.sum(w)
     inputs = (precipitation, temperature, w)
 
     if initial_swe is None:
@@ -51,7 +54,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
     if return_series:
         def scan_step(prev_swe, inputs_d):
             precipitation_d, temperature_d, w_d = inputs_d
-            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d)
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d, residual_d=residual_d)
             return swe, smb 
         # scan_step = jax.remat(scan_step)
         
@@ -61,7 +64,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
         def scan_step(carry, inputs_d):
             precipitation_d, temperature_d, w_d = inputs_d
             prev_swe, smb_acc = carry
-            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d)
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d, residual_d=residual_d)
             return (swe, smb_acc + smb), None 
         # scan_step = jax.remat(scan_step)
         
@@ -71,7 +74,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False):
     return smb, swe
 
 
-def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d):
+def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d, residual_d=0.0):
     """
     Make one-day model timestep.
 
@@ -81,6 +84,7 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d):
         temperature (jnp.ndarray): Temperature (H, W)
         prev_swe (jnp.ndarray): Accumulated snow water equivalent (H, W)
         w_d (jnp.ndarray): Weight to avoid double-counting edge days (scalar 1 or 0.5)
+        residual_d (jnp.ndarray, Optional): Daily residual for SMB and SWB (H, W)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance prediction (H, W)
@@ -105,9 +109,9 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d):
     
     swe = utils.activations.softplus_t(
         swe_softplus_sharpness, 
-        prev_swe + w_d * (prec_scale * solid_precipitation - ddf_snow * t_pos_snow)
+        prev_swe + w_d * (prec_scale * solid_precipitation - ddf_snow * t_pos_snow + fsc * residual_d)
     )
-    smb = w_d * (prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice))
+    smb = w_d * (prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice) + residual_d)
     return smb, swe
 
 

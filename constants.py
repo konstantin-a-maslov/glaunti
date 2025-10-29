@@ -60,6 +60,7 @@ n_filters_2d_branch = 32
 n_stages_2d_branch = 3
 n_filters_1d_branch = 8
 n_stages_1d_branch = 2
+corrector_scaler = 0.1 # Used to stabilise the first epochs
 
 
 # Calibration
@@ -69,8 +70,8 @@ grad_norm_clip = 5
 
 lambda1 = 0.5
 default_lambda2 = 0.1
-default_lambda3 = 0.1
-default_lambda4 = 0.1
+default_lambda3 = 0.5
+default_lambda4 = 0.5
 
 
 # Misc

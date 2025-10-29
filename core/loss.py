@@ -198,8 +198,12 @@ def update_ti_corr_regulariser(aux, ds, lambda3, lambda4):
     if not "reg_ti_corr" in aux:
         aux["reg_ti_corr_acc"] = 0
         aux["reg_ti_corr_n"] = 0
-    reg = lambda3 * (jnp.mean(jnp.square(d1)) + jnp.mean(jnp.square(d2)) + jnp.mean(jnp.square(d3)) + jnp.mean(jnp.square(d4))) + \
-        lambda4 * jnp.mean(se(d2, d3))
+    reg = lambda3 * (
+        jnp.mean(jnp.square(d1)) + 
+        jnp.mean(jnp.square(d2)) + 
+        jnp.mean(jnp.square(d3)) +
+        jnp.mean(jnp.square(d4)) 
+    ) + lambda4 * jnp.mean(se(d2, d3))
     aux["reg_ti_corr_acc"] += reg
     aux["reg_ti_corr_n"] += 1
     aux["reg_ti_corr"] = aux["reg_ti_corr_acc"] / aux["reg_ti_corr_n"]

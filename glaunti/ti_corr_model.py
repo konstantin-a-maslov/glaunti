@@ -13,6 +13,7 @@ class Corrector(eqx.Module):
     branch_1d: Corrector1dBranch
     reproj_1d_to_2d_conv: eqx.nn.Conv1d
     out_conv: eqx.nn.Conv2d
+    scaler: float = eqx.field(static=True)
 
     def __init__(
         self, 
@@ -46,6 +47,7 @@ class Corrector(eqx.Module):
         self.out_conv = eqx.nn.Conv2d(
             n_filters_2d_branch, output_size, kernel_size=1, stride=1, padding=0, key=next(keys)
         )
+        self.scaler = constants.corrector_scaler
 
     def __call__(self, x, initial_h=None, return_series=False):
         y_2d_branch = self._compute_2d_branch(x)
@@ -53,7 +55,7 @@ class Corrector(eqx.Module):
         y_1d_branch_reproj = self.reproj_1d_to_2d_conv(y_1d_branch)
         y_1d_branch_reproj = jnp.expand_dims(y_1d_branch_reproj, 2)
         y_fused = y_2d_branch + y_1d_branch_reproj
-        ds = self.out_conv(y_fused)
+        ds = self.out_conv(y_fused) * self.scaler
         return ds
 
     def _compute_2d_branch(self, x):
@@ -118,9 +120,8 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     ti_params["prec_scale"] = ti_params["prec_scale"] * jnp.exp(d1)
     ti_params["ddf_snow"] = ti_params["ddf_snow"] * jnp.exp(d2)
     ti_params["ddf_relative_ice"] = ti_params["ddf_relative_ice"] * jnp.exp(d3) # explicitly allow < 1.0 here
-    initial_swe = utils.activations.softplus_t(ti_params["swe_softplus_sharpness"], initial_swe + d4)
 
-    smb, swe = glaunti.ti_model.run_model_unconstrained(ti_params, x, initial_swe, return_series)
+    smb, swe = glaunti.ti_model.run_model_unconstrained(ti_params, x, initial_swe, return_series, residual=d4)
 
     if return_corrections:
         return smb, swe, (d1, d2, d3, d4)
