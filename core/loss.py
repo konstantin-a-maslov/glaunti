@@ -15,6 +15,7 @@ def loss(
     lambda1=constants.lambda1, 
     lambda2=constants.default_lambda2, lambda3=constants.default_lambda3, lambda4=constants.default_lambda4, 
     return_aux=True,
+    device_to_prefetch=None,
 ):   
     glacier_name, max_year, aux = glacier["name"], glacier["max_year"], {}
     for balance_code in ["annual", "winter", "summer"]:
@@ -22,8 +23,13 @@ def loss(
             f"total_{balance_code}_error": 0, f"total_{balance_code}_n": 0, f"total_{balance_code}_mse": None, 
             f"point_{balance_code}_error": 0, f"point_{balance_code}_n": 0, f"point_{balance_code}_mse": None,
         })
+    if ti_corr:
+        aux["reg_ti_corr_acc"] = 0
+        aux["reg_ti_corr_n"] = 0
+        aux["reg_ti_corr"] = None
+        
     swe_or_h, next_xy = init_swe_or_h(
-        trainable_params, static_params, model_callable, glacier_name, ti_corr, retrieve_facies
+        trainable_params, static_params, model_callable, glacier_name, ti_corr, retrieve_facies, device_to_prefetch=device_to_prefetch
     )
     
     for year in range(constants.study_period_start_year, max_year + 1):
@@ -32,6 +38,7 @@ def loss(
             glacier_name, year + 1, 
             retrieve_corrector_predictors=ti_corr, 
             retrieve_facies=retrieve_facies,
+            device=device_to_prefetch,
         )
         
         if "annual" in x:
@@ -61,7 +68,11 @@ def loss(
         update_metrics(aux, smb_annual, y, x["outlines"], "annual")
         if ti_corr:
             ds = ys[2]
-            update_ti_corr_regulariser(aux, ds, lambda3, lambda4)
+            reg_ti_corr_acc = aux["reg_ti_corr_acc"]
+            reg_ti_corr_n = aux["reg_ti_corr_n"]
+            reg_ti_corr_acc, reg_ti_corr_n = update_ti_corr_regulariser(reg_ti_corr_acc, reg_ti_corr_n, ds, x["outlines"], lambda3, lambda4)
+            aux["reg_ti_corr_acc"] = reg_ti_corr_acc
+            aux["reg_ti_corr_n"] = reg_ti_corr_n
 
     loss = 0.0
     for balance_code in ["annual", "winter", "summer"]:
@@ -76,6 +87,7 @@ def loss(
         aux["reg_ti"] = ti_regulariser(params, lambda2)
         reg += aux["reg_ti"]
     if ti_corr:
+        aux["reg_ti_corr"] = aux["reg_ti_corr_acc"] / aux["reg_ti_corr_n"]
         reg += aux["reg_ti_corr"]
     
     if return_aux:
@@ -92,6 +104,7 @@ def init_swe_or_h(
     retrieve_corrector_predictors, 
     retrieve_facies, 
     last_numpy=True,
+    device_to_prefetch=None,
 ):
     swe_or_h = None
 
@@ -108,6 +121,7 @@ def init_swe_or_h(
             retrieve_corrector_predictors=retrieve_corrector_predictors, 
             retrieve_facies=retrieve_facies,
             numpy=((year + 1 < constants.study_period_start_year) or last_numpy),
+            device=device_to_prefetch,
         )
 
         if "annual" in x:
@@ -165,7 +179,7 @@ def update_metrics(aux, smb, y, outlines, balance_code):
 def _point_mse_add(smb, rows, cols, balances, weights):
     vals = smb[rows, cols]
     diff = vals - balances
-    err_acc = jnp.sum(weights * diff * diff)
+    err_acc = jnp.sum(weights * jnp.square(diff))
     w_acc = jnp.sum(weights)
     return err_acc, w_acc
 
@@ -183,6 +197,7 @@ def se(true, pred):
     return jnp.square(true - pred)
 
 
+@jax.jit
 def ti_regulariser(params, lambda2):
     init_ti_params = glaunti.ti_model.get_initial_model_parameters()
     init_ti_params = {**init_ti_params[0], **init_ti_params[1]}
@@ -193,18 +208,15 @@ def ti_regulariser(params, lambda2):
     return reg
 
 
-def update_ti_corr_regulariser(aux, ds, lambda3, lambda4):
-    d1, d2, d3, d4 = ds[0], ds[1], ds[2], ds[3]
-    if not "reg_ti_corr" in aux:
-        aux["reg_ti_corr_acc"] = 0
-        aux["reg_ti_corr_n"] = 0
+@jax.jit
+def update_ti_corr_regulariser(reg_ti_corr_acc, reg_ti_corr_n, ds, outlines, lambda3, lambda4, eps=1e-6):
+    d1, d2, d3 = ds[0], ds[1], ds[2]
+    area = jnp.sum(outlines) + eps
     reg = lambda3 * (
-        jnp.mean(jnp.square(d1)) + 
-        jnp.mean(jnp.square(d2)) + 
-        jnp.mean(jnp.square(d3)) +
-        jnp.mean(jnp.square(d4)) 
-    ) + lambda4 * jnp.mean(se(d2, d3))
-    aux["reg_ti_corr_acc"] += reg
-    aux["reg_ti_corr_n"] += 1
-    aux["reg_ti_corr"] = aux["reg_ti_corr_acc"] / aux["reg_ti_corr_n"]
-    return aux
+        jnp.sum(outlines * jnp.square(d1)) / area + 
+        jnp.sum(outlines * jnp.square(d2)) / area + 
+        jnp.sum(outlines * jnp.square(d3)) / area 
+    ) + lambda4 * jnp.sum(outlines * se(d2, d3)) / area
+    reg_ti_corr_acc += reg
+    reg_ti_corr_n += 1
+    return reg_ti_corr_acc, reg_ti_corr_n

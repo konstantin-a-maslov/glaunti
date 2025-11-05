@@ -109,7 +109,7 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     params = {**static_params, **trainable_params}
     if ds is None:
         ds = params["corrector"](x)
-    d1, d2, d3, d4 = ds[0], ds[1], ds[2], ds[3]
+    d1, d2, d3 = ds[0], ds[1], ds[2]
     ti_params = glaunti.ti_model.resolve_param_constraints(params)
     
     if initial_swe is None:
@@ -121,10 +121,10 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     ti_params["ddf_snow"] = ti_params["ddf_snow"] * jnp.exp(d2)
     ti_params["ddf_relative_ice"] = ti_params["ddf_relative_ice"] * jnp.exp(d3) # explicitly allow < 1.0 here
 
-    smb, swe = glaunti.ti_model.run_model_unconstrained(ti_params, x, initial_swe, return_series, residual=d4)
+    smb, swe = glaunti.ti_model.run_model_unconstrained(ti_params, x, initial_swe, return_series)
 
     if return_corrections:
-        return smb, swe, (d1, d2, d3, d4)
+        return smb, swe, (d1, d2, d3)
 
     return smb, swe
 

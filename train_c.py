@@ -57,6 +57,7 @@ def main():
     logger, train_pbar_desc, val_pbar_desc = None, "", ""
 
     best_val_mse, best_epoch = np.inf, 0
+    device = jax.devices()[0]
 
     with tqdm(total=constants.n_epochs + 1, desc="") as pbar:
         for epoch in range(constants.n_epochs + 1):
@@ -65,7 +66,7 @@ def main():
                 accum_grads = jax.tree.map(jnp.zeros_like, trainable_params)
                 for glacier in dataloader.traverse_glaciers(train_subset):
                     (loss_value, aux), grads = loss_grad(
-                        trainable_params, static_params, model_callable, glacier, ti=True, ti_corr=True,
+                        trainable_params, static_params, model_callable, glacier, ti=True, ti_corr=True, device_to_prefetch=device,
                     )            
                     train_mse += extract_mse(aux)
                     accum_grads = jax.tree.map(lambda accum_grads, grads: accum_grads + grads, accum_grads, grads)
@@ -80,7 +81,7 @@ def main():
             val_mse = 0.0
             for glacier in dataloader.traverse_glaciers(val_subset):
                 loss_value, aux = loss.loss(
-                    trainable_params, static_params, model_callable, glacier, ti=True, ti_corr=True,
+                    trainable_params, static_params, model_callable, glacier, ti=True, ti_corr=True, device_to_prefetch=device,
                 ) 
                 val_mse += extract_mse(aux)
                 # log

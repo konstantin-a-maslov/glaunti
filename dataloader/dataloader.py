@@ -1,3 +1,4 @@
+import jax
 import xarray
 import pandas
 import rioxarray
@@ -52,11 +53,11 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
     begin_date, midseason_date, end_date = extract_season_dates(y["total"])
     if y["point"] is not None:
         y["point"] = weight_point_smb(y["point"], begin_date, midseason_date, end_date)
+        y["point"] = group_point_smb_on_grid(y["point"])
     
     outlines = retrieve_outlines(glacier, geometry_year)
-    x = {
-        "outlines": outlines,
-    }
+    x = {}
+    x["outlines"] = outlines
     
     temperature = retrieve_lapse_rate_corrected_temperature(glacier, year, begin_date, end_date)
     precipitation = retrieve_precipitation(glacier, begin_date, end_date)
@@ -124,11 +125,12 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
 
     if numpy:
         x = x_to_raw_numpy(x)
-    
+        
+    x = dict(sorted(x.items()))
     return x, y
 
     
-def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False, numpy=True):
+def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False, numpy=True, device=None):
     def _task():
         x, y = retrieve_xy(
             glacier,
@@ -138,6 +140,8 @@ def prefetch_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
             retrieve_facies=retrieve_facies,
             numpy=numpy,
         )
+        if device is not None:
+            x = to_device_tree(x, device)
         return x, y
     return dataloader.prefetcher.submit(_task)
 
@@ -235,7 +239,7 @@ def retrieve_glacier_facies(glacier, year):
 @cache(use_cache=constants.use_cache)
 def retrieve_facies_placeholder(glacier):
     template = retrieve_outline_model(glacier).isel(year=0).reset_coords(names="year", drop=True)
-    facies = xarray.zeros_like(template, dtype=np.float32) \
+    facies = xarray.full_like(template, -1.0, dtype=np.float32) \
         .expand_dims(band=constants.n_facies_classes + 1) \
         .assign_coords(band=[
             "ice", "snow", "debris", "firn", "shadow", 
@@ -354,6 +358,21 @@ def convert_latlon_to_rowcol(point_smb_df, target_crs, rst_transform, source_crs
     return point_smb_df
 
 
+def group_point_smb_on_grid(point_smb_df, eps=1e-6):
+    grouped = []
+    for (row, col, balance_code), g in point_smb_df.groupby(["row", "col", "balance_code"]):
+        weight_sum = g["weight"].sum()
+        balance = (g["balance"] * g["weight"]).sum() / (weight_sum + eps)
+        grouped.append({
+            "row": row,
+            "col": col,
+            "balance_code": balance_code,
+            "weight": weight_sum,
+            "balance": balance,
+        })
+    return pandas.DataFrame(grouped)
+
+
 def x_to_raw_numpy(x):
     if isinstance(x, dict):
         return {k: x_to_raw_numpy(v) for k, v in x.items()}
@@ -364,6 +383,13 @@ def x_to_raw_numpy(x):
         return np.ascontiguousarray(x.data)
     else:
         return x
+
+
+def to_device_tree(x, device):
+    return jax.tree.map(
+        lambda a: jax.device_put(a, device) if isinstance(a, np.ndarray) else a,
+        x,
+    )
 
 
 def _gaussian_kernel(d, decay_rate=constants.point_smb_weight_decay_rate):
