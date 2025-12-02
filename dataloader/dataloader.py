@@ -40,8 +40,24 @@ def traverse_glaciers(fold):
         yield fold[fold.name == glacier].iloc[0]
 
 
-@cache(use_cache=constants.use_cache)
 def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors=False, retrieve_facies=False, numpy=True):
+    """
+    No-cache variant of _retrieve_xy to avoid in-place edits of x in inverse modelling/initial guess.
+    """
+    x, y = _retrieve_xy(
+        glacier, 
+        year, 
+        geometry_year, 
+        retrieve_corrector_predictors, 
+        retrieve_facies, 
+        numpy=numpy,
+    )
+    x_copy = _copy_nested_dicts(x)
+    return x_copy, y
+
+
+@cache(use_cache=constants.use_cache)
+def _retrieve_xy(glacier, year, geometry_year, retrieve_corrector_predictors, retrieve_facies, numpy):
     if geometry_year is None:
         geometry_year = year
         
@@ -53,13 +69,13 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
     begin_date, midseason_date, end_date = extract_season_dates(y["total"])
     if y["point"] is not None:
         y["point"] = weight_point_smb(y["point"], begin_date, midseason_date, end_date)
-        y["point"] = group_point_smb_on_grid(y["point"])
+        # y["point"] = group_point_smb_on_grid(y["point"])
     
     outlines = retrieve_outlines(glacier, geometry_year)
     x = {}
     x["outlines"] = outlines
     
-    temperature = retrieve_lapse_rate_corrected_temperature(glacier, year, begin_date, end_date)
+    temperature = retrieve_lapse_rate_corrected_temperature(glacier, geometry_year, begin_date, end_date)
     precipitation = retrieve_precipitation(glacier, begin_date, end_date)
     
     # separate climate time series by season if seasons are measured
@@ -84,8 +100,8 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
     # if retrieve_corrector_predictors is True, load and normalise elev, elev_stddev and monthly averaged t and p
     if retrieve_corrector_predictors:
         x.update({
-            "elevation": retrieve_elevation(glacier, year),
-            "elevation_std": retrieve_elevation_std(glacier, year), 
+            "elevation": retrieve_elevation(glacier, geometry_year),
+            "elevation_std": retrieve_elevation_std(glacier, geometry_year), 
             "t_monthly": temperature.resample(time="MS").mean().weighted(outlines).mean(dim=("x", "y")), 
             "p_monthly": precipitation.resample(time="MS").mean().weighted(outlines).mean(dim=("x", "y")),
         })
@@ -94,7 +110,7 @@ def retrieve_xy(glacier, year, geometry_year=None, retrieve_corrector_predictors
     # if retrieve_facies is True and facies are available, load facies, otherwise prepare a placeholder (0 for all bands?)
     if retrieve_facies:
         x["facies"] = retrieve_glacier_facies(glacier, year)
-    else:
+    elif retrieve_corrector_predictors:
         x["facies"] = retrieve_facies_placeholder(glacier)
 
     # stack corrector inputs
@@ -186,9 +202,9 @@ def retrieve_outlines(glacier, year):
 
 
 @cache(use_cache=constants.use_cache)
-def retrieve_lapse_rate_corrected_temperature(glacier, year, begin_date=None, end_date=None):
+def retrieve_lapse_rate_corrected_temperature(glacier, geometry_year, begin_date=None, end_date=None):
     temperature = retrieve_temperature(glacier, begin_date, end_date)
-    elevation = retrieve_elevation(glacier, year)
+    elevation = retrieve_elevation(glacier, geometry_year)
     orography = retrieve_orography(glacier)
     lapse_rate_corrected_temperature = downscale_temperature(temperature, elevation, orography)
     return lapse_rate_corrected_temperature
@@ -340,7 +356,8 @@ def weight_point_smb(point_smb, begin_date, midseason_date, end_date):
 def normalise_features(x):
     normalisation_factors = retrieve_normalisation_factors()
     for feature in ["elevation", "elevation_std", "t_monthly", "p_monthly"]:
-        x[feature] /= normalisation_factors[feature]
+        v = x[feature].copy()
+        x[feature] = v / normalisation_factors[feature]
     return x
     
     
@@ -358,19 +375,19 @@ def convert_latlon_to_rowcol(point_smb_df, target_crs, rst_transform, source_crs
     return point_smb_df
 
 
-def group_point_smb_on_grid(point_smb_df, eps=1e-6):
-    grouped = []
-    for (row, col, balance_code), g in point_smb_df.groupby(["row", "col", "balance_code"]):
-        weight_sum = g["weight"].sum()
-        balance = (g["balance"] * g["weight"]).sum() / (weight_sum + eps)
-        grouped.append({
-            "row": row,
-            "col": col,
-            "balance_code": balance_code,
-            "weight": weight_sum,
-            "balance": balance,
-        })
-    return pandas.DataFrame(grouped)
+# def group_point_smb_on_grid(point_smb_df, eps=1e-6):
+#     grouped = []
+#     for (row, col, balance_code), g in point_smb_df.groupby(["row", "col", "balance_code"]):
+#         weight_sum = g["weight"].sum()
+#         balance = (g["balance"] * g["weight"]).sum() / (weight_sum + eps)
+#         grouped.append({
+#             "row": row,
+#             "col": col,
+#             "balance_code": balance_code,
+#             "weight": weight_sum,
+#             "balance": balance,
+#         })
+#     return pandas.DataFrame(grouped)
 
 
 def x_to_raw_numpy(x):
@@ -390,6 +407,15 @@ def to_device_tree(x, device):
         lambda a: jax.device_put(a, device) if isinstance(a, np.ndarray) else a,
         x,
     )
+
+
+def _copy_nested_dicts(x):
+    copy = x.copy()
+    for k in list(copy.keys()):
+        v = copy[k]
+        if isinstance(v, dict):
+            copy[k] = _copy_nested_dicts(v)
+    return copy
 
 
 def _gaussian_kernel(d, decay_rate=constants.point_smb_weight_decay_rate):

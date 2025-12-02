@@ -4,7 +4,7 @@ import utils.activations
 import constants
 
 
-def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False, residual=0.0):
+def run_model(trainable_params, static_params, x, initial_swe=None, return_series=False, t_pos_shift=0.0):
     """
     Run the model over time series of precipitation and temperature with constrained parameters.
 
@@ -13,7 +13,7 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
         static_params (PyTree): Set of non-trainable parameters
         x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
-        residual (jnp.ndarray, Optional): Period residual for SMB and SWE (H, W)
+        t_pos_shift (jnp.ndarray): Temperature shift for positive temperature computation (H, W)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
@@ -22,11 +22,11 @@ def run_model(trainable_params, static_params, x, initial_swe=None, return_serie
     params = {**static_params, **trainable_params}
     params = resolve_param_constraints(params) # Extract params, impose constraints where needed
 
-    smb, swe = run_model_unconstrained(params, x, initial_swe, return_series, residual=residual)
+    smb, swe = run_model_unconstrained(params, x, initial_swe, return_series, t_pos_shift=t_pos_shift)
     return smb, swe
 
 
-def run_model_unconstrained(params, x, initial_swe=None, return_series=False, residual=0.0):
+def run_model_unconstrained(params, x, initial_swe=None, return_series=False, t_pos_shift=0.0):
     """
     Run the model over time series of precipitation and temperature with unconstrained parameters.
 
@@ -34,7 +34,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False, re
         params (PyTree): Set of parameters
         x (PyTree): Dictionary with keys 'precipitation' and 'temperature', each of shape (T, H, W)
         initial_swe (jnp.ndarray, Optional): Initial snow water equivalent (H, W)
-        residual (jnp.ndarray, Optional): Period residual for SMB and SWE (H, W)
+        t_pos_shift (jnp.ndarray): Temperature shift for positive temperature computation (H, W)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance predictions (H, W) or (T, H, W) if return_series
@@ -44,7 +44,6 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False, re
     temperature = x["temperature"]
     time, _, _ = temperature.shape
     w = jnp.ones((time, )).at[0].set(0.5).at[-1].set(0.5)
-    residual_d = residual / jnp.sum(w)
     inputs = (precipitation, temperature, w)
 
     if initial_swe is None:
@@ -54,9 +53,9 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False, re
     if return_series:
         def scan_step(prev_swe, inputs_d):
             precipitation_d, temperature_d, w_d = inputs_d
-            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d, residual_d=residual_d)
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d, t_pos_shift=t_pos_shift)
             return swe, smb 
-        # scan_step = jax.remat(scan_step)
+        scan_step = jax.remat(scan_step)
         
         swe, smb = jax.lax.scan(scan_step, initial_swe, inputs)
         
@@ -64,9 +63,9 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False, re
         def scan_step(carry, inputs_d):
             precipitation_d, temperature_d, w_d = inputs_d
             prev_swe, smb_acc = carry
-            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d, residual_d=residual_d)
+            smb, swe = run_one_day_iteration(params, precipitation_d, temperature_d, prev_swe, w_d, t_pos_shift=t_pos_shift)
             return (swe, smb_acc + smb), None 
-        # scan_step = jax.remat(scan_step)
+        scan_step = jax.remat(scan_step)
         
         carry = (initial_swe, jnp.zeros_like(initial_swe))
         (swe, smb), _ = jax.lax.scan(scan_step, carry, inputs)
@@ -74,7 +73,7 @@ def run_model_unconstrained(params, x, initial_swe=None, return_series=False, re
     return smb, swe
 
 
-def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d, residual_d=0.0):
+def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d, t_pos_shift=0.0):
     """
     Make one-day model timestep.
 
@@ -84,7 +83,7 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d, res
         temperature (jnp.ndarray): Temperature (H, W)
         prev_swe (jnp.ndarray): Accumulated snow water equivalent (H, W)
         w_d (jnp.ndarray): Weight to avoid double-counting edge days (scalar 1 or 0.5)
-        residual_d (jnp.ndarray, Optional): Daily residual for SMB and SWB (H, W)
+        t_pos_shift (jnp.ndarray): Temperature shift for positive temperature computation (H, W)
 
     Returns:
         smb (jnp.ndarray): Surface mass balance prediction (H, W)
@@ -102,16 +101,16 @@ def run_one_day_iteration(params, precipitation, temperature, prev_swe, w_d, res
     
     solid_precipitation = precipitation * jax.nn.sigmoid(snow_to_rain_steepness * (snow_to_rain_centre - temperature))
 
-    t_pos = utils.activations.softplus_t(t_softplus_sharpness, temperature)
+    t_pos = utils.activations.softplus_t(t_softplus_sharpness, temperature + t_pos_shift)
     fsc = utils.activations.hill_curve(snow_depletion_steepness, snow_depletion_centre, prev_swe)
     t_pos_snow = fsc * t_pos
     t_pos_ice = (1 - fsc) * t_pos
     
     swe = utils.activations.softplus_t(
         swe_softplus_sharpness, 
-        prev_swe + w_d * (prec_scale * solid_precipitation - ddf_snow * t_pos_snow + fsc * residual_d)
+        prev_swe + w_d * (prec_scale * solid_precipitation - ddf_snow * t_pos_snow)
     )
-    smb = w_d * (prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice) + residual_d)
+    smb = w_d * (prec_scale * solid_precipitation - ddf_snow * (t_pos_snow + ddf_relative_ice * t_pos_ice))
     return smb, swe
 
 

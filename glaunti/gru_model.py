@@ -19,7 +19,7 @@ class GRUBaseline(eqx.Module):
 
     def __call__(self, x, initial_h=None, return_series=False):
         precipitation = x["precipitation"]
-        temperature = x["temperature"]
+        temperature = x["temperature"] / constants.gru_temperature_scaler
         time, height, width = temperature.shape
 
         inputs = jnp.stack([precipitation, temperature], axis=-1)
@@ -48,7 +48,7 @@ class GRUBaseline(eqx.Module):
                 h_next = jnp.where(m_t > 0.5, h_prop, h)
                 y = w_t * batched_out(h_next).squeeze(-1)
                 return h_next, y
-            # scan_step = jax.remat(scan_step)
+            scan_step = jax.remat(scan_step)
             
             final_h_flat, smb_flat = jax.lax.scan(scan_step, h0_flat, (inputs_flat, w, m_step))
             smb = smb_flat.reshape(time, height, width)
@@ -61,7 +61,7 @@ class GRUBaseline(eqx.Module):
                 h_next = jnp.where(m_t > 0.5, h_prop, h)
                 y = batched_out(h_next).squeeze(-1)
                 return (h_next, y_acc + w_t * y), None
-            # scan_step = jax.remat(scan_step)
+            scan_step = jax.remat(scan_step)
 
             y0 = batched_out(h0_flat).squeeze(-1)
             carry = (h0_flat, jnp.zeros_like(y0))

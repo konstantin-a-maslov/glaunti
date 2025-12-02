@@ -13,7 +13,8 @@ def loss(
     glacier, 
     ti=False, ti_corr=False, retrieve_facies=False, 
     lambda1=constants.lambda1, 
-    lambda2=constants.default_lambda2, lambda3=constants.default_lambda3, lambda4=constants.default_lambda4, 
+    lambda2=constants.default_lambda2, 
+    lambda3=constants.default_lambda3, lambda4=constants.default_lambda4, lambda5=constants.default_lambda5, 
     return_aux=True,
     device_to_prefetch=None,
 ):   
@@ -41,21 +42,21 @@ def loss(
             device=device_to_prefetch,
         )
         
-        if "annual" in x:
-            x_annual = {k: v for k, v in x.items() if k != "annual"}
-            x_annual.update(x["annual"])
+        if not "winter" in x:
+            x_annual = dict(x)
+            x_annual.update(x_annual["annual"])
             ys = model_callable(trainable_params, static_params, x_annual, swe_or_h)
             smb_annual, swe_or_h = ys[0], ys[1]
 
         else:
-            x_winter = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
-            x_winter.update(x["winter"])
+            x_winter = dict(x)
+            x_winter.update(x_winter["winter"])
             ys = model_callable(trainable_params, static_params, x_winter, swe_or_h)
             smb_winter, swe_or_h = ys[0], ys[1]
             update_metrics(aux, smb_winter, y, x["outlines"], "winter")
 
-            x_summer = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
-            x_summer.update(x["summer"])
+            x_summer = dict(x)
+            x_summer.update(x_summer["summer"])
             if ti_corr:
                 ys = model_callable(trainable_params, static_params, x_summer, swe_or_h, ds=ys[2])
             else:
@@ -70,7 +71,7 @@ def loss(
             ds = ys[2]
             reg_ti_corr_acc = aux["reg_ti_corr_acc"]
             reg_ti_corr_n = aux["reg_ti_corr_n"]
-            reg_ti_corr_acc, reg_ti_corr_n = update_ti_corr_regulariser(reg_ti_corr_acc, reg_ti_corr_n, ds, x["outlines"], lambda3, lambda4)
+            reg_ti_corr_acc, reg_ti_corr_n = update_ti_corr_regulariser(reg_ti_corr_acc, reg_ti_corr_n, ds, x["outlines"], lambda3, lambda4, lambda5)
             aux["reg_ti_corr_acc"] = reg_ti_corr_acc
             aux["reg_ti_corr_n"] = reg_ti_corr_n
 
@@ -125,19 +126,19 @@ def init_swe_or_h(
         )
 
         if "annual" in x:
-            x_annual = {k: v for k, v in x.items() if k != "annual"}
-            x_annual.update(x["annual"])
+            x_annual = dict(x)
+            x_annual.update(x_annual["annual"])
             ys = model_callable(trainable_params, static_params, x_annual, swe_or_h)
             swe_or_h = ys[1]
             
         else:
-            x_winter = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
-            x_winter.update(x["winter"])
+            x_winter = dict(x)
+            x_winter.update(x_winter["winter"])
             ys = model_callable(trainable_params, static_params, x_winter, swe_or_h)
             swe_or_h = ys[1]
 
-            x_summer = {k: v for k, v in x.items() if k not in {"winter", "summer"}}
-            x_summer.update(x["summer"])
+            x_summer = dict(x)
+            x_summer.update(x_summer["summer"])
             ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
             swe_or_h = ys[1]
     
@@ -209,14 +210,33 @@ def ti_regulariser(params, lambda2):
 
 
 @jax.jit
-def update_ti_corr_regulariser(reg_ti_corr_acc, reg_ti_corr_n, ds, outlines, lambda3, lambda4, eps=1e-6):
-    d1, d2, d3 = ds[0], ds[1], ds[2]
+def update_ti_corr_regulariser(reg_ti_corr_acc, reg_ti_corr_n, ds, outlines, lambda3, lambda4, lambda5, eps=1e-6):
+    d1, d2, d3, d4, d5 = ds[0], ds[1], ds[2], ds[3], ds[4]
     area = jnp.sum(outlines) + eps
+    
     reg = lambda3 * (
         jnp.sum(outlines * jnp.square(d1)) / area + 
         jnp.sum(outlines * jnp.square(d2)) / area + 
-        jnp.sum(outlines * jnp.square(d3)) / area 
-    ) + lambda4 * jnp.sum(outlines * se(d2, d3)) / area
+        jnp.sum(outlines * jnp.square(d3)) / area +
+        jnp.sum(outlines * jnp.square(d4)) / area +
+        jnp.sum(outlines * jnp.square(d5)) / area 
+    ) 
+
+    d1_mean = jnp.sum(outlines * d1) / area
+    d2_mean = jnp.sum(outlines * d2) / area
+    d3_mean = jnp.sum(outlines * d3) / area
+    d4_mean = jnp.sum(outlines * d4) / area
+    d5_mean = jnp.sum(outlines * d5) / area
+    reg += lambda4 * (
+        jnp.sum(outlines * se(d1, d1_mean)) / area +
+        jnp.sum(outlines * se(d2, d2_mean)) / area +
+        jnp.sum(outlines * se(d3, d3_mean)) / area +
+        jnp.sum(outlines * se(d4, d4_mean)) / area +
+        jnp.sum(outlines * se(d5, d5_mean)) / area 
+    )
+                
+    reg += lambda5 * jnp.sum(outlines * se(d2, d3)) / area
+    
     reg_ti_corr_acc += reg
     reg_ti_corr_n += 1
     return reg_ti_corr_acc, reg_ti_corr_n

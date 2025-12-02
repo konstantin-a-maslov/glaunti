@@ -11,7 +11,7 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 jax.config.update("jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir")
 
-import glaunti.ti_corr_model as model
+import glaunti.gru_model as model
 import dataloader.dataloader as dataloader
 import core.loss as loss
 import core.training as training
@@ -31,21 +31,17 @@ def main():
 
     model_callable = jax.jit(
         jax.remat(
-            lambda trainable_params, static_params, x, initial_swe, ds=None: model.run_model(
+            lambda trainable_params, static_params, x, initial_h: model.run_model(
                 trainable_params, 
                 static_params, 
                 x, 
-                initial_swe=initial_swe, 
+                initial_h=initial_h, 
                 return_series=False, 
-                return_corrections=True,
-                ds=ds,
             ),
         ),
-        # donate_argnums=(2, ),
     )
 
-    params = model.get_initial_model_parameters(ti_params_static=True)
-    trainable_params, static_params = utils.serialise.load_pytree("params/c.eqx", template=params)
+    trainable_params, static_params = model.get_initial_model_parameters()
 
     loss_grad = jax.value_and_grad(loss.loss, argnums=0, has_aux=True)
     optimiser = training.get_optimiser()
@@ -62,8 +58,7 @@ def main():
                 accum_grads = jax.tree.map(jnp.zeros_like, trainable_params)
                 for glacier in dataloader.traverse_glaciers(train_subset):
                     (loss_value, aux), grads = loss_grad(
-                        trainable_params, static_params, model_callable, glacier, ti=True, ti_corr=True, retrieve_facies=True,
-                        device_to_prefetch=device,
+                        trainable_params, static_params, model_callable, glacier, ti=False, device_to_prefetch=device,
                     )            
                     train_mse += extract_mse(aux)
                     accum_grads = jax.tree.map(lambda accum_grads, grads: accum_grads + grads, accum_grads, grads)
@@ -78,19 +73,18 @@ def main():
             val_mse = 0.0
             for glacier in dataloader.traverse_glaciers(val_subset):
                 loss_value, aux = loss.loss(
-                    trainable_params, static_params, model_callable, glacier, ti=True, ti_corr=True, retrieve_facies=True,
-                    device_to_prefetch=device,
+                    trainable_params, static_params, model_callable, glacier, ti=False, device_to_prefetch=device,
                 ) 
                 val_mse += extract_mse(aux)
                 # log
                 log_record = {"timestamp": str(datetime.datetime.now()), "epoch": epoch, "glacier": glacier["name"], "subset": "val", "loss": loss_value, **aux}
                 if logger is None:
-                    logger = utils.logger.CSVLogger("logs/d.csv", log_record.keys())
+                    logger = utils.logger.CSVLogger("logs/b.csv", log_record.keys())
                 logger.log(log_record)
             val_mse /= len(val_subset)
             if val_mse < best_val_mse:
                 best_val_mse, best_epoch = val_mse, epoch
-                utils.serialise.save_pytree((trainable_params, static_params), "params/d.eqx")
+                utils.serialise.save_pytree((trainable_params, static_params), "params/b.eqx")
             val_pbar_desc = f"val_mse={val_mse:.3f} (best={best_val_mse:.3f} at #{best_epoch})"
 
             pbar.set_description(f"{train_pbar_desc}{val_pbar_desc} [m w.e.]")

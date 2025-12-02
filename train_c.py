@@ -42,10 +42,11 @@ def main():
                 ds=ds,
             ),
         ),
+        # donate_argnums=(2, ),
     )
 
     ti_params = glaunti.ti_model.get_initial_model_parameters()
-    ti_params = utils.serialise.load_pytree("params/a", template=ti_params)
+    ti_params = utils.serialise.load_pytree("params/a.eqx", template=ti_params)
     trainable_params, static_params = model.get_initial_model_parameters(
         ti_params=ti_params, 
         ti_params_static=True,

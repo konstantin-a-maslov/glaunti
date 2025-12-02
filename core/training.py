@@ -5,11 +5,11 @@ from functools import partial
 import constants
 
 
-def get_optimiser():
+def get_optimiser(lr=constants.learning_rate):
     opt_chain = [
         optax.clip_by_global_norm(constants.grad_norm_clip), 
         optax.scale_by_adam(),
-        optax.scale(-constants.learning_rate),
+        optax.scale(-lr),
     ]
     optimiser = optax.chain(*opt_chain)
     return optimiser
