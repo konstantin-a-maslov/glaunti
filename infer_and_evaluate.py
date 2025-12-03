@@ -143,18 +143,18 @@ def evaluate(smb, glacier):
         outlines = dataloader.retrieve_outlines(glacier["name"], year)
         begin_date, midseason_date, end_date = dataloader.extract_season_dates(total_smb)
         total_smb = total_smb.iloc[0]
-        
+
         if not pandas.isna(total_smb.annual_balance):
             annual_smb_subset = smb.sel(time=slice(begin_date, end_date))
             annual_smb_model = (annual_smb_subset * outlines).sum() / outlines.sum()
             evaluation["true_pred"]["glacier-wise"]["overall"]["annual"]["true"].append(float(total_smb.annual_balance))
             evaluation["true_pred"]["glacier-wise"]["overall"]["annual"]["pred"].append(float(annual_smb_model))
-        if midseason_date and not pandas.isna(total_smb.winter_balance):
+        if not pandas.isna(midseason_date) and not pandas.isna(total_smb.winter_balance):
             winter_smb_subset = smb.sel(time=slice(begin_date, midseason_date))
             winter_smb_model = (winter_smb_subset * outlines).sum() / outlines.sum()
             evaluation["true_pred"]["glacier-wise"]["overall"]["winter"]["true"].append(float(total_smb.winter_balance))
             evaluation["true_pred"]["glacier-wise"]["overall"]["winter"]["pred"].append(float(winter_smb_model))
-        if midseason_date and not pandas.isna(total_smb.summer_balance):
+        if not pandas.isna(midseason_date) and not pandas.isna(total_smb.summer_balance):
             summer_smb_subset = smb.sel(time=slice(midseason_date, end_date))
             summer_smb_model = (summer_smb_subset * outlines).sum() / outlines.sum()
             evaluation["true_pred"]["glacier-wise"]["overall"]["summer"]["true"].append(float(total_smb.summer_balance))
