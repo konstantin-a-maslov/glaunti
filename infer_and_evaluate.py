@@ -20,13 +20,8 @@ import core.loss as loss
 import utils.serialise
 import constants
 
-import datetime
 import numpy as np
-import pyproj
-
-import sklearn.metrics
 import scipy
-
 import json
 import os
 from tqdm import tqdm
@@ -34,15 +29,15 @@ import argparse
 
 
 def main():
-    model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path = parse_args()
+    model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path = resolve_args()
     smb = infer(model, ti, ti_corr, facies, params_path, glacier)
     save_smb(smb, smb_path)
     evaluation = evaluate(smb, glacier)
     save_evaluation(evaluation, eval_path)
-    print(model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path)
+    print_summary(evaluation)
     
 
-def parse_args():
+def resolve_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("model", choices=["a", "b", "c", "d"], help="Model name")
     parser.add_argument("glacier", help="Glacier name")
@@ -114,7 +109,10 @@ def infer(model, ti, ti_corr, facies, params_path, glacier):
             smb_results.append(np.array(smb))
             x_summer = dict(x)
             x_summer.update(x_summer["summer"])
-            ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
+            if ti_corr:
+                ys = model_callable(trainable_params, static_params, x_summer, swe_or_h, ds=ys[2])
+            else:
+                ys = model_callable(trainable_params, static_params, x_summer, swe_or_h)
             smb, swe_or_h = ys[0], ys[1]
             smb_results.append(np.array(smb))
 
@@ -136,11 +134,75 @@ def save_smb(smb, smb_path):
 
     
 def evaluate(smb, glacier):
-    pass
+    evaluation = get_evaluation_template(glacier)
+
+    for year in tqdm(range(constants.study_period_start_year, glacier.max_year + 1), desc="Evaluation"):
+        smb_records = dataloader.retrieve_smb_records(glacier["name"], year)
+        total_smb = smb_records["total"]
+        point_smb = smb_records["point"]
+        outlines = dataloader.retrieve_outlines(glacier["name"], year)
+        begin_date, midseason_date, end_date = dataloader.extract_season_dates(total_smb)
+        total_smb = total_smb.iloc[0]
+        
+        if not pandas.isna(total_smb.annual_balance):
+            annual_smb_subset = smb.sel(time=slice(begin_date, end_date))
+            annual_smb_model = (annual_smb_subset * outlines).sum() / outlines.sum()
+            evaluation["true_pred"]["glacier-wise"]["overall"]["annual"]["true"].append(float(total_smb.annual_balance))
+            evaluation["true_pred"]["glacier-wise"]["overall"]["annual"]["pred"].append(float(annual_smb_model))
+        if midseason_date and not pandas.isna(total_smb.winter_balance):
+            winter_smb_subset = smb.sel(time=slice(begin_date, midseason_date))
+            winter_smb_model = (winter_smb_subset * outlines).sum() / outlines.sum()
+            evaluation["true_pred"]["glacier-wise"]["overall"]["winter"]["true"].append(float(total_smb.winter_balance))
+            evaluation["true_pred"]["glacier-wise"]["overall"]["winter"]["pred"].append(float(winter_smb_model))
+        if midseason_date and not pandas.isna(total_smb.summer_balance):
+            summer_smb_subset = smb.sel(time=slice(midseason_date, end_date))
+            summer_smb_model = (summer_smb_subset * outlines).sum() / outlines.sum()
+            evaluation["true_pred"]["glacier-wise"]["overall"]["summer"]["true"].append(float(total_smb.summer_balance))
+            evaluation["true_pred"]["glacier-wise"]["overall"]["summer"]["pred"].append(float(summer_smb_model))
+        
+        if point_smb is not None:
+            for m in point_smb.itertuples():
+                if m.balance_code == "index":
+                    continue
+                smb_subset = smb.sel(time=slice(m.begin_date, m.end_date))
+                smb_subset = smb_subset[:, m.row, m.col]
+                smb_model = smb_subset.sum()
+                
+                evaluation["true_pred"]["point"]["overall"][m.balance_code]["true"].append(float(m.balance))
+                evaluation["true_pred"]["point"]["overall"][m.balance_code]["pred"].append(float(smb_model))
+                evaluation["true_pred"]["point"]["per_year"][m.balance_code][year]["true"].append(float(m.balance))
+                evaluation["true_pred"]["point"]["per_year"][m.balance_code][year]["pred"].append(float(smb_model))
+
+    stack = [(evaluation["true_pred"], evaluation["metrics"])]
+    while len(stack) > 0:
+        src, dst = stack.pop()
+        if "true" in src.keys() and "pred" in src.keys():
+            dst.update(populate_metrics(src))
+            continue
+        for k in src.keys():
+            stack.append((src[k], dst[k]))
+                    
+    return evaluation
 
     
-def save_evaluation(evaluation, output_path):
-    pass
+def save_evaluation(evaluation, eval_path):
+    folder = os.path.dirname(eval_path)
+    os.makedirs(folder, exist_ok=True)
+    with open(eval_path, "w") as dst:
+        json.dump(evaluation, dst, indent=4)
+
+
+def print_summary(evaluation):
+    for estimation_type in ["point", "glacier-wise"]:
+        for season in ["annual", "winter", "summer"]:
+            metrics = evaluation["metrics"][estimation_type]["overall"][season]
+            if metrics["n"] > 1:
+                print(f"{estimation_type}, {season}, n = {metrics['n']}")
+                print(f"\tpearson r = {metrics['pearson_r']:.3f} (p = {metrics['pearson_r_p']:.6f})")
+                print(f"\tbias = {metrics['bias']:.3f} m w.e.")
+                print(f"\trmse = {metrics['rmse']:.3f} m w.e.")
+                print(f"\tmae = {metrics['mae']:.3f} m w.e.")
+                print()
     
 
 def load_params(model, ti_corr, params_path):
@@ -156,9 +218,7 @@ def get_model_callable(model, ti, ti_corr):
     if ti_corr: # c, d
         model_callable = jax.jit(
             lambda trainable_params, static_params, x, initial_swe, ds=None: model.run_model(
-                trainable_params, 
-                static_params, 
-                x, 
+                trainable_params, static_params, x, 
                 initial_swe=initial_swe, 
                 return_series=True, 
                 return_corrections=True,
@@ -168,9 +228,7 @@ def get_model_callable(model, ti, ti_corr):
     elif ti: # a
         model_callable = jax.jit(
             lambda trainable_params, static_params, x, initial_swe: model.run_model(
-                trainable_params, 
-                static_params, 
-                x, 
+                trainable_params, static_params, x, 
                 initial_swe=initial_swe, 
                 return_series=True, 
             )
@@ -178,15 +236,52 @@ def get_model_callable(model, ti, ti_corr):
     else: # b
         model_callable = jax.jit(
             lambda trainable_params, static_params, x, initial_h: model.run_model(
-                trainable_params, 
-                static_params, 
-                x, 
+                trainable_params, static_params, x, 
                 initial_h=initial_h, 
                 return_series=True, 
             )
         )
+        
     return model_callable
 
+
+def get_evaluation_template(glacier):
+    evaluation = {"metrics": {}, "true_pred": {}}
+    for estimation_type in ["point", "glacier-wise"]:
+        for k in ["metrics", "true_pred"]:
+            evaluation[k][estimation_type] = {"overall": {}, "per_year": {}}
+            for season in ["annual", "winter", "summer"]:
+                evaluation[k][estimation_type]["overall"][season] = {}
+                evaluation[k][estimation_type]["per_year"][season] = {}
+        for season in ["annual", "winter", "summer"]:
+            evaluation["true_pred"][estimation_type]["overall"][season] = {"true": [], "pred": []}
+            evaluation["true_pred"][estimation_type]["per_year"][season] = {}
+            for year in range(constants.study_period_start_year, glacier.max_year + 1):
+                evaluation["true_pred"][estimation_type]["per_year"][season][year] = {"true": [], "pred": []}
+                evaluation["metrics"][estimation_type]["per_year"][season][year] = {}
+    del evaluation["metrics"]["glacier-wise"]["per_year"], evaluation["true_pred"]["glacier-wise"]["per_year"]
+    return evaluation
+
+
+def populate_metrics(src):
+    true = np.array(src["true"])
+    pred = np.array(src["pred"])
+
+    metrics = {
+        "n": len(true),
+    }
+    if metrics["n"] > 1:
+        r, p = scipy.stats.pearsonr(pred, true)
+        metrics.update({
+            "pearson_r": r,
+            "pearson_r_p": p,
+            "rmse": np.sqrt(np.mean((pred - true)**2)),
+            "mae": np.mean(np.abs(pred - true)),
+            "bias": np.mean(pred - true),
+        })
     
+    return metrics
+
+
 if __name__ == "__main__":
     main()
