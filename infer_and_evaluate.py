@@ -149,16 +149,22 @@ def evaluate(smb, glacier):
             annual_smb_model = (annual_smb_subset * outlines).sum() / outlines.sum()
             evaluation["true_pred"]["glacier-wide"]["overall"]["annual"]["true"].append(float(total_smb.annual_balance))
             evaluation["true_pred"]["glacier-wide"]["overall"]["annual"]["pred"].append(float(annual_smb_model))
+            evaluation["true_pred"]["glacier-wide"]["per_year"]["annual"][year]["true"].append(float(total_smb.annual_balance))
+            evaluation["true_pred"]["glacier-wide"]["per_year"]["annual"][year]["pred"].append(float(annual_smb_model))
         if not pandas.isna(midseason_date) and not pandas.isna(total_smb.winter_balance):
             winter_smb_subset = smb.sel(time=slice(begin_date, midseason_date))
             winter_smb_model = (winter_smb_subset * outlines).sum() / outlines.sum()
             evaluation["true_pred"]["glacier-wide"]["overall"]["winter"]["true"].append(float(total_smb.winter_balance))
             evaluation["true_pred"]["glacier-wide"]["overall"]["winter"]["pred"].append(float(winter_smb_model))
+            evaluation["true_pred"]["glacier-wide"]["per_year"]["winter"][year]["true"].append(float(total_smb.winter_balance))
+            evaluation["true_pred"]["glacier-wide"]["per_year"]["winter"][year]["pred"].append(float(winter_smb_model))
         if not pandas.isna(midseason_date) and not pandas.isna(total_smb.summer_balance):
             summer_smb_subset = smb.sel(time=slice(midseason_date, end_date))
             summer_smb_model = (summer_smb_subset * outlines).sum() / outlines.sum()
             evaluation["true_pred"]["glacier-wide"]["overall"]["summer"]["true"].append(float(total_smb.summer_balance))
             evaluation["true_pred"]["glacier-wide"]["overall"]["summer"]["pred"].append(float(summer_smb_model))
+            evaluation["true_pred"]["glacier-wide"]["per_year"]["summer"][year]["true"].append(float(total_smb.summer_balance))
+            evaluation["true_pred"]["glacier-wide"]["per_year"]["summer"][year]["pred"].append(float(summer_smb_model))
         
         if point_smb is not None:
             for m in point_smb.itertuples():
@@ -259,7 +265,6 @@ def get_evaluation_template(glacier):
             for year in range(constants.study_period_start_year, glacier.max_year + 1):
                 evaluation["true_pred"][estimation_type]["per_year"][season][year] = {"true": [], "pred": []}
                 evaluation["metrics"][estimation_type]["per_year"][season][year] = {}
-    del evaluation["metrics"]["glacier-wide"]["per_year"], evaluation["true_pred"]["glacier-wide"]["per_year"]
     return evaluation
 
 
