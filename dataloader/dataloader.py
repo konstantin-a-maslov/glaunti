@@ -107,7 +107,7 @@ def _retrieve_xy(glacier, year, geometry_year, retrieve_corrector_predictors, re
         })
         x = normalise_features(x)
 
-    # if retrieve_facies is True and facies are available, load facies, otherwise prepare a placeholder (0 for all bands?)
+    # if retrieve_facies is True and facies are available, load facies, otherwise prepare a placeholder (-1 for all bands)
     if retrieve_facies:
         x["facies"] = retrieve_glacier_facies(glacier, year)
     elif retrieve_corrector_predictors:
