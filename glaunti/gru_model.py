@@ -18,7 +18,7 @@ class GRUBaseline(eqx.Module):
         self.init_h = jax.random.normal(next(keys), shape=(h_size,)) * h_scale
 
     def __call__(self, x, initial_h=None, return_series=False):
-        precipitation = x["precipitation"]
+        precipitation = x["precipitation"] / constants.gru_precipitation_scaler
         temperature = x["temperature"] / constants.gru_temperature_scaler
         time, height, width = temperature.shape
 
