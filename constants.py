@@ -48,7 +48,8 @@ gru_input_size = 2
 gru_output_size = 1
 gru_h_size = 16
 gru_initial_h_scale = 0.01
-gru_temperature_scaler = 30.0
+gru_temperature_scaler = 45.744850158691406
+gru_precipitation_scaler = 0.16851751506328583
 
 
 # Corrector parameters
