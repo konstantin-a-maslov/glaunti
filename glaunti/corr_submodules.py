@@ -40,7 +40,7 @@ class RMSNorm1d(eqx.Module):
         return y
 
         
-class Conv2dINAct(eqx.Module):
+class Conv2dNormAct(eqx.Module):
     conv: eqx.nn.Conv2d
     norm: RMSNorm2d
     act: Callable = eqx.field(static=True) 
@@ -57,13 +57,13 @@ class Conv2dINAct(eqx.Module):
 
 
 class DoubleConv2d(eqx.Module):
-    block1: Conv2dINAct
-    block2: Conv2dINAct
+    block1: Conv2dNormAct
+    block2: Conv2dNormAct
 
     def __init__(self, in_ch, out_ch, key):
         k1, k2 = jax.random.split(key, 2)
-        self.block1 = Conv2dINAct(in_ch, out_ch, key=k1)
-        self.block2 = Conv2dINAct(out_ch, out_ch, key=k2)
+        self.block1 = Conv2dNormAct(in_ch, out_ch, key=k1)
+        self.block2 = Conv2dNormAct(out_ch, out_ch, key=k2)
 
     def __call__(self, x):
         return self.block2(self.block1(x))
@@ -83,7 +83,7 @@ class Down(eqx.Module):
         return x
 
 
-class Conv1dINAct(eqx.Module):
+class Conv1dNormAct(eqx.Module):
     conv: eqx.nn.Conv1d
     norm: RMSNorm1d
     act: Callable = eqx.field(static=True) 
@@ -100,13 +100,13 @@ class Conv1dINAct(eqx.Module):
 
 
 class DoubleConv1d(eqx.Module):
-    block1: Conv1dINAct
-    block2: Conv1dINAct
+    block1: Conv1dNormAct
+    block2: Conv1dNormAct
 
     def __init__(self, in_ch, out_ch, key):
         k1, k2 = jax.random.split(key, 2)
-        self.block1 = Conv1dINAct(in_ch, out_ch, key=k1)
-        self.block2 = Conv1dINAct(out_ch, out_ch, key=k2)
+        self.block1 = Conv1dNormAct(in_ch, out_ch, key=k1)
+        self.block2 = Conv1dNormAct(out_ch, out_ch, key=k2)
 
     def __call__(self, x):
         return self.block2(self.block1(x))
