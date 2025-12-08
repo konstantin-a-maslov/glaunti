@@ -55,7 +55,8 @@ gru_precipitation_scaler = 0.16851751506328583
 # Corrector parameters
 n_facies_classes = 8
 
-corrector_field_size = 16 # outlines(1) + elev(1) + elev_stddev(1) + oro(1) + facies(8) + facies conf(1) + smb0 and extra(3)
+# corrector_field_size = 16 # outlines(1) + elev(1) + elev_stddev(1) + oro(1) + facies(8) + facies conf(1) + smb0 and extra(3)
+corrector_field_size = 15 # outlines(1) + elev(1) + elev_stddev(1) + facies(8) + facies conf(1) + smb0 and extra(3)
 climate_monthly_size = 2 
 corrector_output_size = 5
 n_filters_2d_branch = 32

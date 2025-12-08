@@ -102,7 +102,7 @@ def _retrieve_xy(glacier, year, geometry_year, retrieve_corrector_predictors, re
         x.update({
             "elevation": retrieve_elevation(glacier, geometry_year),
             "elevation_std": retrieve_elevation_std(glacier, geometry_year), 
-            "delta_z": retrieve_elevation(glacier, geometry_year) - retrieve_orography(glacier), 
+            # "delta_z": retrieve_elevation(glacier, geometry_year) - retrieve_orography(glacier), 
             "t_monthly": temperature.resample(time="MS").mean().weighted(outlines).mean(dim=("x", "y")), 
             "p_monthly": precipitation.resample(time="MS").mean().weighted(outlines).mean(dim=("x", "y")),
         })
@@ -121,7 +121,7 @@ def _retrieve_xy(glacier, year, geometry_year, retrieve_corrector_predictors, re
                 x["outlines"].expand_dims(band=["outlines"]).rename("outlines"),
                 x["elevation"].expand_dims(band=["elevation"]).rename("elevation"),
                 x["elevation_std"].expand_dims(band=["elevation_std"]).rename("elevation_std"),
-                x["delta_z"].expand_dims(band=["delta_z"]).rename("delta_z"),
+                # x["delta_z"].expand_dims(band=["delta_z"]).rename("delta_z"),
                 x["facies"].rename("facies")
             ],
             dim="band",
@@ -130,7 +130,8 @@ def _retrieve_xy(glacier, year, geometry_year, retrieve_corrector_predictors, re
         corrector_fields = corrector_fields.transpose("band", "y", "x")
         corrector_fields = corrector_fields.rename("corrector_fields")
         x["corrector_fields"] = corrector_fields
-        del x["elevation"], x["elevation_std"], x["delta_z"], x["facies"]
+        # del x["elevation"], x["elevation_std"], x["delta_z"], x["facies"]
+        del x["elevation"], x["elevation_std"], x["facies"]
         
         climate_monthly = xarray.concat(
             [x["t_monthly"].rename("t"), x["p_monthly"].rename("p")],
@@ -357,7 +358,8 @@ def weight_point_smb(point_smb, begin_date, midseason_date, end_date):
 
 def normalise_features(x):
     normalisation_factors = retrieve_normalisation_factors()
-    for feature in ["elevation", "elevation_std", "delta_z", "t_monthly", "p_monthly"]:
+    # for feature in ["elevation", "elevation_std", "delta_z", "t_monthly", "p_monthly"]:
+    for feature in ["elevation", "elevation_std", "t_monthly", "p_monthly"]:
         v = x[feature].copy()
         x[feature] = v / normalisation_factors[feature]
     return x
