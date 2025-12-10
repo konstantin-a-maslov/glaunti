@@ -25,6 +25,8 @@ from tqdm import tqdm
 
 
 def main():
+    constants.n_epochs = 100
+    
     dataset_index = dataloader.retrieve_dataset_index()
     train_subset = dataloader.get_train_subset(dataset_index)
     val_subset = dataloader.get_val_subset(dataset_index)
