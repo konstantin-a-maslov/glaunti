@@ -15,8 +15,8 @@ import rioxarray
 import xarray
 import pandas
 
-# The script is tied to model C as in the manuscript, yet one can easily adapt it to other models
-import glaunti.ti_corr_model as model
+# The script is tied to model A as in the manuscript, yet one can easily adapt it to other models
+import glaunti.ti_model as model
 import train_c
 import dataloader.dataloader as dataloader
 import core.loss as loss
@@ -31,24 +31,21 @@ from tqdm import tqdm
 import argparse
 
 
-ti, ti_corr, facies = True, True, False
+ti, ti_corr, facies = True, False, False
 train_year_end, val_year_end = 2012, 2018
-n_epochs, learning_rate = 250, 1e-4
+n_epochs, learning_rate = 250, 1e-2
 
 
 def main():
     glacier, init_params_path, final_params_path, log_path = resolve_args()
-    params = model.get_initial_model_parameters(ti_params_static=True)
+    params = model.get_initial_model_parameters()
     trainable_params, static_params = utils.serialise.load_pytree(init_params_path, template=params)
-    trainable_params, static_params = {**trainable_params, **static_params}, {} # unfreeze TI params
 
     model_callable = jax.jit(
-        lambda trainable_params, static_params, x, initial_swe, ds=None: model.run_model(
+        lambda trainable_params, static_params, x, initial_swe: model.run_model(
             trainable_params, static_params, x, 
             initial_swe=initial_swe, 
             return_series=False, 
-            return_corrections=True,
-            ds=ds,
         )
     )
 
@@ -191,13 +188,13 @@ def resolve_args():
     parser.add_argument("--log_path", help="Log path (.csv)")
     args = parser.parse_args()
 
-    default_init_params_path = "params/c.eqx"
+    default_init_params_path = "params/a.eqx"
     init_params_path = args.init_params_path or default_init_params_path
 
-    default_final_params_path = f"params/c_finetuned_{args.glacier}.eqx"
+    default_final_params_path = f"params/a_finetuned_{args.glacier}.eqx"
     final_params_path = args.final_params_path or default_final_params_path
     
-    default_log_path = f"logs/c_finetuned_{args.glacier}.csv"
+    default_log_path = f"logs/a_finetuned_{args.glacier}.csv"
     log_path = args.log_path or default_log_path
 
     dataset_index = dataloader.retrieve_dataset_index()
