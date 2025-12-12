@@ -29,8 +29,8 @@ import argparse
 
 
 def main():
-    model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path = resolve_args()
-    smb = infer(model, ti, ti_corr, facies, params_path, glacier)
+    model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path, unfreeze_ti = resolve_args()
+    smb = infer(model, unfreeze_ti, ti, ti_corr, facies, params_path, glacier)
     save_smb(smb, smb_path)
     evaluation = evaluate(smb, glacier)
     save_evaluation(evaluation, eval_path)
@@ -44,6 +44,7 @@ def resolve_args():
     parser.add_argument("smb_path", help="Output SMB path (.nc)")
     parser.add_argument("eval_path", help="Output evaluation path (.json)")
     parser.add_argument("--params_path", help="Params path (.eqx)")
+    parser.add_argument("--unfreeze_ti", action="store_true", help="Load with unfrozen TI params (e.g. for finetuned models)")
     args = parser.parse_args()
 
     ti, ti_corr, facies = False, False, False
@@ -65,14 +66,16 @@ def resolve_args():
     smb_path = args.smb_path
     eval_path = args.eval_path
 
+    unfreeze_ti = args.unfreeze_ti
+    
     dataset_index = dataloader.retrieve_dataset_index()
     glacier = dataset_index[dataset_index.name == args.glacier].iloc[0]
     
-    return model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path
+    return model, ti, ti_corr, facies, params_path, glacier, smb_path, eval_path, unfreeze_ti
 
 
-def infer(model, ti, ti_corr, facies, params_path, glacier):
-    trainable_params, static_params = load_params(model, ti_corr, params_path)
+def infer(model, unfreeze_ti, ti, ti_corr, facies, params_path, glacier):
+    trainable_params, static_params = load_params(model, unfreeze_ti, ti_corr, params_path)
     model_callable = get_model_callable(model, ti, ti_corr) 
     smb_results, ts = [], []
 
@@ -211,9 +214,9 @@ def print_summary(evaluation):
                 print()
     
 
-def load_params(model, ti_corr, params_path):
+def load_params(model, unfreeze_ti, ti_corr, params_path):
     if ti_corr:
-        params = model.get_initial_model_parameters(ti_params_static=True)
+        params = model.get_initial_model_parameters(ti_params_static=(not unfreeze_ti))
     else:
         params = model.get_initial_model_parameters()
     params = utils.serialise.load_pytree(params_path, template=params)
