@@ -6,7 +6,7 @@
 
 <br/>
 
-**The repository is in progress!**
+**The repository is in progress (yet, it already contains everything to reproduce the results)!**
 
 <br/>
 
