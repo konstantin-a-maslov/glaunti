@@ -37,6 +37,68 @@ Adjust `data_folder = ...` in `constants.py` accordingly to proceed.
 
 ## Getting started
 
+### Repository layout
+
+- `glaunti/`&mdash;model definitions (TI, GRU, GlaUnTI)
+- `core/`&mdash;loss functions and training utilities
+- `dataloader/`&mdash;dataset IO, feature construction, caching/prefetching
+- `train_a.py`, `train_b.py`, `train_c.py`, `train_d.py`&mdash;training scripts for Models A&ndash;D
+- `infer_and_evaluate.py`&mdash;inference + evaluation for a selected glacier/model
+- `finetune.py`&mdash;per-glacier finetuning/transfer learning (TI model)
+- `inverse_modelling.ipynb`, `xai.ipynb`, `aleatoric_uq.ipynb`&mdash;illustrative examples enabled by end-to-end differentiability
+- `params/`&mdash;saved parameter pytrees (`.eqx`) (pretrained weights and/or training outputs)
+- `logs/`&mdash;training logs (`.csv`)
+
+> Tip: run scripts from the **repository root** (imports assume this working directory).
+
+<br/>
+
+The repository includes four calibrated model variants used in the manuscript:
+- **Model A**&mdash;Basic autodiff-friendly **TI** model  
+- **Model B**&mdash;Purely data-driven **GRU** baseline  
+- **Model C**&mdash;**GlaUnTI without glacier facies** (facies channels replaced by a placeholder)  
+- **Model D**&mdash;**GlaUnTI with facies** (uses end-of-ablation-season facies maps where available)
+
+
+### Installation
+
+We recommend using the [Anaconda](https://www.anaconda.com/download) or [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) Python distributions. 
+After installing one of them, create the environment from `env.yml`:
+```bash
+conda env create -f env.yml
+conda activate massive-jax
+```
+
+Notes:
+- `env.yml` is configured for a CUDA-enabled `jaxlib` build. If you do not use CUDA, **manually** install dependencies for your preferred build (e.g. CPU or Metal)
+- NetCDF reading/writing uses the `netcdf4` engine via `xarray`
+
+
+### Running scripts
+
+Training
+
+<br/>
+
+Fine-tuning
+
+<br/>
+
+Inference and eval
+
+
+### Notebooks 
+
+The repository provides three notebooks with illustrative examples enables by end-to-end differentiability (described in Appendix A of the manuscript):
+- [inverse_modelling.ipynb](inverse_modelling.ipynb)&mdash;gradient-based inverse optimisation of effective forcing perturbations
+- [xai.ipynb](xai.ipynb)&mdash;model explainability/input attribution
+- [aleatoric_uq.ipynb](aleatoric_uq.ipynb)&mdash;first-order propagation of forcing-driven aleatoric uncertainty along SMB trajectories
+
+
+### DEM imputation
+
+Data-driven imputation of elevation voids (described in Appendix B of the manuscript) is deposited in [a separate repository](https://github.com/konstantin-a-maslov/demimputation).
+
 
 ## License
 
@@ -49,6 +111,6 @@ To cite the paper/repository, please use the following bib entry.
 
 ```
 @article{
-  ...
+  ... COMING SOON ...
 }
 ```
