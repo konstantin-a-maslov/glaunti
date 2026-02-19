@@ -64,7 +64,7 @@ The repository includes four calibrated model variants used in the manuscript:
 
 We recommend using the [Anaconda](https://www.anaconda.com/download) or [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) Python distributions. 
 After installing one of them, create the environment from `env.yml`:
-```bash
+```
 conda env create -f env.yml
 conda activate massive-jax
 ```
@@ -76,15 +76,54 @@ Notes:
 
 ### Running scripts
 
-Training
+Training scripts write best parameters to `params/<model>.eqx` and training logs to `logs/<model>.csv`.
+Run in this order to train the whole suite of models from scratch:
+```
+python train_a.py
+python train_b.py
+python train_c.py
+python train_d.py
+```
+> Models C and D depend on the availability of `params/a.eqx` and `params/c.eqx`, respectively.
 
 <br/>
 
-Fine-tuning
+`finetune.py` finetunes Model A on a single glacier (useful for transfer-learning experiments and is used in the notebooks):
+The usage is as follows:
+```
+usage: finetune.py [-h] [--init_params_path INIT_PARAMS_PATH] [--final_params_path FINAL_PARAMS_PATH] [--log_path LOG_PATH] glacier
+
+positional arguments:
+  glacier               Glacier name
+
+options:
+  -h, --help            show this help message and exit
+  --init_params_path INIT_PARAMS_PATH
+                        Init params path (.eqx)
+  --final_params_path FINAL_PARAMS_PATH
+                        Final params path (.eqx)
+  --log_path LOG_PATH   Log path (.csv)
+```
 
 <br/>
 
-Inference and eval
+Use `infer_and_evaluate.py` to run a model for one glacier and produce daily SMB outputs (`.nc`) as well as an evaluation summary (`.json`). 
+The usage is as follows:
+```
+usage: infer_and_evaluate.py [-h] [--params_path PARAMS_PATH] [--unfreeze_ti] {a,b,c,d} glacier smb_path eval_path
+
+positional arguments:
+  {a,b,c,d}             Model name
+  glacier               Glacier name
+  smb_path              Output SMB path (.nc)
+  eval_path             Output evaluation path (.json)
+
+options:
+  -h, --help            show this help message and exit
+  --params_path PARAMS_PATH
+                        Params path (.eqx)
+  --unfreeze_ti         Load with unfrozen TI params (e.g. for finetuned models)
+```
 
 
 ### Notebooks 
