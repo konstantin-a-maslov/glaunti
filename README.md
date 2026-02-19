@@ -128,7 +128,7 @@ options:
 
 ### Notebooks 
 
-The repository provides three notebooks with illustrative examples enables by end-to-end differentiability (described in Appendix A of the manuscript):
+The repository provides three notebooks with illustrative examples enabled by end-to-end differentiability (described in Appendix A of the manuscript):
 - [inverse_modelling.ipynb](inverse_modelling.ipynb)&mdash;gradient-based inverse optimisation of effective forcing perturbations
 - [xai.ipynb](xai.ipynb)&mdash;model explainability/input attribution
 - [aleatoric_uq.ipynb](aleatoric_uq.ipynb)&mdash;first-order propagation of forcing-driven aleatoric uncertainty along SMB trajectories
