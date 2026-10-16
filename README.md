@@ -2,7 +2,7 @@
 
 [Konstantin A. Maslov](https://people.utwente.nl/k.a.maslov), [Thomas Schellenberger](https://www.mn.uio.no/geo/english/people/aca/geohyd/thosche/), [Claudio Persello](https://people.utwente.nl/c.persello), [Alfred Stein](https://people.utwente.nl/a.stein)
 
-[[`Paper`]()] [[`Dataset`](#dataset)] [[`BibTeX`](#citing)] 
+[[`Paper`](https://egusphere.copernicus.org/preprints/2026/egusphere-2026-515/)] [[`Dataset`](#dataset)] [[`BibTeX`](#citing)] 
 
 <br/>
 
@@ -149,7 +149,14 @@ This software is licensed under the [GNU General Public License v2](LICENSE).
 To cite the paper/repository, please use the following bib entry. 
 
 ```
-@article{
-  ... COMING SOON ...
+@article{egusphere-2026-515,
+  author = {Maslov, K. A. and Schellenberger, T. and Persello, C. and Stein, A.},
+  title = {GlaUnTI: A hybrid physics–machine learning model enables transferable glacier surface mass balance estimation},
+  journal = {EGUsphere},
+  volume = {2026},
+  year = {2026},
+  pages = {1--34},
+  url = {https://egusphere.copernicus.org/preprints/2026/egusphere-2026-515/},
+  doi = {10.5194/egusphere-2026-515}
 }
 ```
